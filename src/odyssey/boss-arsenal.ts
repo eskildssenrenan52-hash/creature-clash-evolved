@@ -74,13 +74,15 @@ interface Mod { id: string; name: string; wrap(c: BossCtx, run: (c: BossCtx, p: 
 const MODS: Mod[] = [
   { id: "puro", name: "", wrap: (c, run, p) => run(c, p) },
   { id: "eco", name: "em Eco", wrap: (c, run, p) => { run(c, p); c.later(0.55, () => run(c, { ...p, rot: p.rot + 0.4 })); } },
-  { id: "fenda", name: "Fendido", wrap: (c, run, p) => run({ ...bind(c), shot: (x, y, vx, vy, d, r, l) => { c.shot(x, y, vx, vy, d, r, l); c.later(0.4, () => { const sx = x + vx * 0.4, sy = y + vy * 0.4, a = Math.atan2(vy, vx), s = Math.hypot(vx, vy); for (const o of [-0.6, 0.6]) c.shot(sx, sy, Math.cos(a + o) * s, Math.sin(a + o) * s, d * 0.6, 2, 1); }); } }, p) },
+  { id: "fenda", name: "Fendido", wrap: (c, run, p) => run(withShot(c, (x, y, vx, vy, d, r, l) => { c.shot(x, y, vx, vy, d, r, l); c.later(0.4, () => { const sx = x + vx * 0.4, sy = y + vy * 0.4, a = Math.atan2(vy, vx), s = Math.hypot(vx, vy); for (const o of [-0.6, 0.6]) c.shot(sx, sy, Math.cos(a + o) * s, Math.sin(a + o) * s, d * 0.6, 2, 1); }); }), p) },
   { id: "duplo", name: "Duplo", wrap: (c, run, p) => { run(c, { ...p, sp: p.sp * 0.7 }); c.later(0.25, () => run(c, { ...p, sp: p.sp * 1.3, rot: p.rot + 0.2 })); } },
   { id: "rastro", name: "com Rastro", wrap: (c, run, p) => { run(c, p); for (let i = 0; i < 4; i++) c.later(i * 0.2, () => c.tele(c.ex, c.ey, 18, 1.2, c.hit)); } },
   { id: "tremor", name: "com Tremor", wrap: (c, run, p) => { run(c, p); c.later(0.8, () => { c.tele(c.px, c.py, 26, 0.7, c.hit * 1.2); c.shake(5); }); } },
   { id: "furia", name: "Furioso", wrap: (c, run, p) => { for (let k = 0; k < 3; k++) c.later(k * 0.18, () => run(c, { ...p, n: Math.max(1, p.n - 3), rot: p.rot + k * 0.3 })); } },
-  { id: "espelhado", name: "Espelhado", wrap: (c, run, p) => run({ ...bind(c), shot: (x, y, vx, vy, d, r, l) => { c.shot(x, y, vx, vy, d, r, l); c.shot(x, y, -vx, vy, d, r, l); } }, p) },
+  { id: "espelhado", name: "Espelhado", wrap: (c, run, p) => run(withShot(c, (x, y, vx, vy, d, r, l) => { c.shot(x, y, vx, vy, d, r, l); c.shot(x, y, -vx, vy, d, r, l); }), p) },
 ];
+
+function withShot(c: BossCtx, shot: BossCtx["shot"]): BossCtx { const b = bind(c); b.shot = shot; return b; }
 
 /** Copia o contexto mantendo os getters vivos (posição do chefe/herói no momento). */
 function bind(c: BossCtx): BossCtx {
