@@ -25,7 +25,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView web;
     private WebViewAssetLoader assetLoader;
 
-    @SuppressLint({"SetJavaScriptEnabled", "AllowFileAccess", "SetDomStorageEnabled"})
+    @SuppressLint({"SetJavaScriptEnabled", "SetDomStorageEnabled"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -45,10 +45,9 @@ public class MainActivity extends AppCompatActivity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setAllowFileAccess(true);
+        settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(true);
-        // A build offline usa módulos ES e imports relativos sob file:///android_asset.
-        // Bloquear file-to-file deixa o APK com uma tela vazia antes do React montar.
+        // A origem HTTPS virtual entrega somente assets incluídos no APK; não abrir URLs file://.
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);

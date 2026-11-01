@@ -3,10 +3,11 @@ import { BOSSES, ENEMIES, ITEMS, NPCS, QUESTS, RECIPES, type QuestDef } from './
 import { FRONTIER_GATES, FRONTIER_KEYS } from './frontier';
 import { generateWorld, SOLID, TS, W, H, T } from './world';
 import { ACTS, BEATS, ECOS, STORY_BOSS_LOOK, STORY_QUESTS, VAEL_ARENA, actChainQuests, beatsFor, cycleBonus, depthBonus, endgameDrop } from './story';
+import { CITADEL_BOSS_LOOK } from './demon-citadel';
 
 const questIds = new Set(QUESTS.map(q => q.id));
 const npcIds = new Set(NPCS.map(n => n.id));
-const bossIds = new Set(BOSSES.map(b => b.id));
+const bossIds = new Set([...BOSSES.map(b => b.id), ...Object.keys(CITADEL_BOSS_LOOK)]);
 
 describe('Crônica do Cântico Partido — dados', () => {
   it('cobre os 17 Ecos, um por bioma de fronteira, distribuídos nos atos II–V', () => {

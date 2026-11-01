@@ -6,6 +6,7 @@ import { SAGA_REALMS, sagaBossId } from './saga';
 import { ISLANDS } from './archipelago';
 import { STATUES } from './data';
 import { growPlots } from './settlement';
+import { fxFor } from './fx-catalog';
 
 const TS = 16;
 export type Buffs = Record<BuffId, number>;
@@ -62,20 +63,27 @@ export function castSkill(g: Game, s: SkillDef) {
   const a = g.aimNearest(170); const len = Math.hypot(a.x, a.y) || 1, dx = a.x / len, dy = a.y / len;
   g.setDirFrom(dx, dy); p.attackT = 1;
   const cx = p.x, cy = p.y - 8;
+  const prefer = ef.kind === 'heal' ? ['renewal', 'nature'] as const : ef.kind === 'buff' ? ['barrier', 'goldenrune'] as const
+    : ef.kind === 'dash' ? ['shadowstep', 'wind'] as const : ef.kind === 'zone' ? ['goldenrune', 'lightning'] as const
+    : ef.kind === 'nova' ? ['fireburst', 'starburst'] as const : ef.kind === 'slowAll' ? ['iceburst', 'frost'] as const
+    : 'proj' in ef && ef.proj === 'ice' ? ['iceburst', 'ice'] as const : 'proj' in ef && ef.proj === 'fire' ? ['fireburst', 'firestorm'] as const
+    : ['arcane', 'missiletrail'] as const;
+  const visual = fxFor(`skill:${s.id}`, prefer);
+  g.fx(visual.name, cx, cy, 0.8, false, 0.42, visual.h);
   switch (ef.kind) {
     case 'proj': {
       g.audio.sfx(ef.proj === 'ice' ? 'ice' : ef.proj === 'arrow' ? 'bow' : 'fire');
       for (let i = 0; i < ef.count; i++) {
         const o = ef.count === 1 ? 0 : (i / (ef.count - 1) - 0.5) * 2 * ef.spread * (ef.count > 3 ? 2 : 1);
         const ang = Math.atan2(dy, dx) + o;
-        g.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * ef.speed, vy: Math.sin(ang) * ef.speed, life: ef.life ?? 1, dmg: pow(ef.dmg), from: 'p', kind: ef.proj, r: ef.dmg > 6 ? 7 : 4, color: s.color, slow: !!ef.slow });
+        g.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * ef.speed, vy: Math.sin(ang) * ef.speed, life: ef.life ?? 1, dmg: pow(ef.dmg), from: 'p', kind: ef.proj, r: ef.dmg > 6 ? 7 : 4, color: s.color, slow: !!ef.slow, fx: visual.name, h: visual.h });
       }
       if (ef.drain) { const h = Math.round(pow(ef.dmg) * ef.drain); p.hp = Math.min(g.maxHp(), p.hp + h); g.float(p.x, p.y - 28, `+${h}`, '#ff80a0'); }
       break;
     }
     case 'ring':
       g.audio.sfx('ice');
-      for (let i = 0; i < ef.count; i++) { const ang = (i / ef.count) * Math.PI * 2; g.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * 200, vy: Math.sin(ang) * 200, life: 0.8, dmg: pow(ef.dmg), from: 'p', kind: ef.proj, r: 4, color: s.color, slow: !!ef.slow }); }
+      for (let i = 0; i < ef.count; i++) { const ang = (i / ef.count) * Math.PI * 2; g.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * 200, vy: Math.sin(ang) * 200, life: 0.8, dmg: pow(ef.dmg), from: 'p', kind: ef.proj, r: 4, color: s.color, slow: !!ef.slow, fx: visual.name, h: visual.h }); }
       break;
     case 'nova':
       g.audio.sfx('wind'); g.burst(cx, cy, s.color, 40, 150, 2);
@@ -87,7 +95,7 @@ export function castSkill(g: Game, s: SkillDef) {
       for (let i = 0; i < ef.count; i++) {
         const ox = ef.count > 1 ? Math.cos(i * 2.1) * 34 : 0, oy = ef.count > 1 ? Math.sin(i * 2.1) * 24 : 0;
         const tx = cx + (len > 1 ? a.x : dx * 50) + ox, ty = cy + (len > 1 ? a.y : dy * 50) + oy;
-        g.teles.push({ x: tx, y: ty, r: ef.radius, t: 0.35 + i * 0.18, max: 0.35 + i * 0.18, dmg: -pow(ef.dmg) });
+        g.teles.push({ x: tx, y: ty, r: ef.radius, t: 0.35 + i * 0.18, max: 0.35 + i * 0.18, dmg: -pow(ef.dmg), fx: visual.name, h: visual.h, color: s.color });
       }
       break;
     case 'heal': {
@@ -106,7 +114,7 @@ export function castSkill(g: Game, s: SkillDef) {
       const steps = 10, sx = p.x, sy = p.y;
       for (let i = 0; i < steps; i++) { const bx = p.x, by = p.y; g.moveBody(p, (dx * ef.dist) / steps, (dy * ef.dist) / steps); if (p.x === bx && p.y === by) break; }
       g.burst(sx, sy - 8, s.color, 18, 40); g.burst(p.x, p.y - 8, s.color, 18, 40); p.inv = Math.max(p.inv, 0.35);
-      if (ef.trail) for (let i = 1; i <= 4; i++) g.teles.push({ x: sx + (p.x - sx) * (i / 4), y: sy - 8 + (p.y - sy) * (i / 4), r: 22, t: 0.15 * i, max: 0.15 * i, dmg: -pow(ef.trail) });
+      if (ef.trail) for (let i = 1; i <= 4; i++) g.teles.push({ x: sx + (p.x - sx) * (i / 4), y: sy - 8 + (p.y - sy) * (i / 4), r: 22, t: 0.15 * i, max: 0.15 * i, dmg: -pow(ef.trail), fx: visual.name, h: visual.h, color: s.color });
       break;
     }
     case 'recall': {

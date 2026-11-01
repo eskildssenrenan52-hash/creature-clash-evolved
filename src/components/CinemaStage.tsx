@@ -5,6 +5,7 @@ import { drawChar, drawEnemy } from "@/odyssey/gfx";
 import type { EpicScene } from "@/odyssey/epic";
 import { NPCS, type Palette } from "@/odyssey/data";
 import { directScene, rngOf, shotAt, type BossLook, type Script, type Setting } from "@/odyssey/cine-director";
+import azrakelThroneEnding from "@/assets/depths/game/azrakel-throne-ending.png";
 
 const HERO = { name: "Você", pal: { skin: "#f0c8a0", hair: "#f0d040", body: "#3070c0", legs: "#2a3050" } };
 const GORM = NPCS[0]!;
@@ -37,6 +38,8 @@ export function CinemaStage({ scene, line, beat, look }: { scene: EpicScene; lin
     const cv = ref.current; const c = cv?.getContext("2d"); if (!cv || !c) return;
     c.imageSmoothingEnabled = false;
     const script = directScene(beat ?? { id: scene.id, title: scene.title, lines: scene.lines }, look);
+    const finaleImage = scene.id === "citadel_finale" ? new Image() : null;
+    if (finaleImage) finaleImage.src = azrakelThroneEnding;
     const actors = scene.actors.length ? scene.actors : [HERO];
     const pal = PALS[script.setting];
     const rr = rngOf(script.seed ^ 0x9e37);
@@ -57,23 +60,32 @@ export function CinemaStage({ scene, line, beat, look }: { scene: EpicScene; lin
       g.addColorStop(0, pal.sky[0]); g.addColorStop(1, shade(pal.sky[1], -script.night * 0.35)); c.fillStyle = g; c.fillRect(0, 0, W, H);
       const tiltY = shot.kind === "skyTilt" ? (1 - ease) * 60 : 0;
       c.translate(W / 2 + shake, H / 2 + tiltY); c.rotate(shot.tilt * Math.sin(local * 0.5)); c.scale(zoom, zoom); c.translate(-W / 2 - pan * 0.2, -H / 2);
-      // astro
-      const sunX = 60 + (script.seed % 200), sunY = 30 + script.night * 20;
-      c.fillStyle = script.night > 0.5 ? "rgba(230,230,255,.9)" : pal.light; c.beginPath(); c.arc(sunX - pan * 0.1, sunY, 9, 0, 7); c.fill();
-      c.fillStyle = "rgba(255,255,255,.08)"; c.beginPath(); c.arc(sunX - pan * 0.1, sunY, 20, 0, 7); c.fill();
-      if (script.night > 0.4) for (let i = 0; i < 40; i++) { c.fillStyle = `rgba(255,255,255,${0.3 + 0.6 * Math.abs(Math.sin(T * 1.5 + i))})`; c.fillRect((i * 73 + script.seed) % W, (i * 37) % 80, 1, 1); }
-      if (shot.kind === "skyTilt" || script.setting === "sky" || script.mood === "finale") aurora(c, T, pal.accent);
-      // camadas distantes
-      skyline(c, script.setting, far, pal.far, HORIZON - 30, 28, -pan * 0.3, T);
-      skyline(c, script.setting, mid, pal.mid, HORIZON - 12, 18, -pan * 0.6, T);
-      landmark(c, script, pal, -pan * 0.5, T, shot.kind === "treeSong" ? ease : 0.2);
-      // chão
-      c.fillStyle = pal.ground; c.fillRect(-60, HORIZON, W + 120, H);
-      c.fillStyle = "rgba(0,0,0,.18)"; for (let x = -60; x < W + 60; x += 6) c.fillRect(x - (pan % 6), HORIZON + 4 + ((x * 7) % 30), 3, 1);
-      if (script.setting === "sea") { c.fillStyle = "rgba(160,230,255,.35)"; for (let x = 0; x < W; x += 10) c.fillRect((x + T * 12) % W, HORIZON + 2 + Math.sin(x + T * 2) * 1.5, 6, 1); }
+      const showFinalArt = !!finaleImage?.complete && finaleImage.naturalWidth > 0;
+      if (showFinalArt) {
+        c.drawImage(finaleImage!, -20 - pan * 0.1, -12, W + 40, H + 24);
+        c.fillStyle = `rgba(16,4,10,${0.08 + Math.sin(T * 1.7) * 0.035})`; c.fillRect(-30, -20, W + 60, H + 40);
+      } else {
+        // astro
+        const sunX = 60 + (script.seed % 200), sunY = 30 + script.night * 20;
+        c.fillStyle = script.night > 0.5 ? "rgba(230,230,255,.9)" : pal.light; c.beginPath(); c.arc(sunX - pan * 0.1, sunY, 9, 0, 7); c.fill();
+        c.fillStyle = "rgba(255,255,255,.08)"; c.beginPath(); c.arc(sunX - pan * 0.1, sunY, 20, 0, 7); c.fill();
+        if (script.night > 0.4) for (let i = 0; i < 40; i++) { c.fillStyle = `rgba(255,255,255,${0.3 + 0.6 * Math.abs(Math.sin(T * 1.5 + i))})`; c.fillRect((i * 73 + script.seed) % W, (i * 37) % 80, 1, 1); }
+        if (shot.kind === "skyTilt" || script.setting === "sky" || script.mood === "finale") aurora(c, T, pal.accent);
+        // camadas distantes
+        skyline(c, script.setting, far, pal.far, HORIZON - 30, 28, -pan * 0.3, T);
+        skyline(c, script.setting, mid, pal.mid, HORIZON - 12, 18, -pan * 0.6, T);
+        landmark(c, script, pal, -pan * 0.5, T, shot.kind === "treeSong" ? ease : 0.2);
+        // chão
+        c.fillStyle = pal.ground; c.fillRect(-60, HORIZON, W + 120, H);
+        c.fillStyle = "rgba(0,0,0,.18)"; for (let x = -60; x < W + 60; x += 6) c.fillRect(x - (pan % 6), HORIZON + 4 + ((x * 7) % 30), 3, 1);
+        if (script.setting === "sea") { c.fillStyle = "rgba(160,230,255,.35)"; for (let x = 0; x < W; x += 10) c.fillRect((x + T * 12) % W, HORIZON + 2 + Math.sin(x + T * 2) * 1.5, 6, 1); }
+      }
       // conteúdo do plano
       const speaker = lineRef.current % actors.length;
-      shotContent(c, script, shot.kind, local, ease, T, actors, speaker, pal, pan);
+      if (showFinalArt) {
+        const hero = actors[0]!; actor(c, hero.pal, 252 + Math.sin(T * 0.8) * 2, HORIZON + 37, 1.8, 1, Math.floor(T * 3) % 4, hero.name, speaker === 0);
+        if (shot.kind === "shatter" || shot.kind === "bossRoar") burstRays(c, 150, 78, pal.light, 0.75, T);
+      } else shotContent(c, script, shot.kind, local, ease, T, actors, speaker, pal, pan);
       c.setTransform(1, 0, 0, 1, 0, 0); c.filter = "none";
       weather(c, script, parts, T);
       // luz e grade de cor

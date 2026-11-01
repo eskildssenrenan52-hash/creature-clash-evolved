@@ -236,6 +236,9 @@ export const STORY_ITEMS: ItemDef[] = [
   it({ id: 'void_plate', name: 'Placa do Vazio', type: 'armor', def: 48, bonus: { vit: 12, hp: 150 }, desc: 'Nenhum golpe encontra eco.', color: '#6a4aa0', price: 7000 }),
   it({ id: 'void_ring', name: 'Anel do Último Acorde', type: 'ring', bonus: { str: 9, dex: 9, int: 9 }, desc: '+9 For, Des, Int', color: '#8a4fd0', price: 5000 }),
   it({ id: 'void_amulet', name: 'Amuleto do Fim da Canção', type: 'amulet', bonus: { vit: 10, wis: 10, hp: 200 }, desc: '+10 Vit, +10 Sab, +200 HP', color: '#c090ff', price: 5000 }),
+  it({ id: 'gehenna_ember', name: 'Brasa de Gehenna', type: 'material', desc: 'Uma brasa viva do trono demoníaco. Cada uma guarda a força de um guardião.', color: '#ff663b', price: 950 }),
+  it({ id: 'gehenna_blade', name: 'Gume do Trono', type: 'weapon', weapon: 'sword', atk: 148, bonus: { str: 72, dex: 34, hp: 260 }, desc: 'Forjado com brasas dos guardiões; sua lâmina só desperta no fim da Cidadela.', color: '#ff5a45', price: 36000 }),
+  it({ id: 'azrakel_crown', name: 'Coroa Desperta de Azrakel', type: 'amulet', bonus: { str: 68, dex: 52, int: 64, vit: 42, wis: 36, hp: 1200, mp: 600 }, desc: 'A coroa do Rei Demônio, conquistada no trono do 100º andar.', color: '#ffbf4a', price: 120000 }),
 ];
 const rc = (out: string, cost: Record<string, number>, gold: number): Recipe => ({ out, qty: 1, station: 'smith', cost, gold });
 export const STORY_RECIPES: Recipe[] = [
@@ -245,6 +248,7 @@ export const STORY_RECIPES: Recipe[] = [
   rc('void_blade', { void_essence: 8, eco_shard: 10, iron_ingot: 8 }, 3000), rc('void_lance', { void_essence: 8, eco_shard: 10, iron_ingot: 8 }, 3000),
   rc('void_bow', { void_essence: 8, eco_shard: 10, wood: 20 }, 3000), rc('void_staff', { void_essence: 8, eco_shard: 10, mana_shard: 15 }, 3200),
   rc('void_plate', { void_essence: 12, eco_shard: 14, iron_ingot: 12 }, 4000), rc('void_ring', { void_essence: 6, eco_shard: 8 }, 2500), rc('void_amulet', { void_essence: 6, eco_shard: 8 }, 2500),
+  rc('gehenna_blade', { gehenna_ember: 8, void_essence: 8, iron_ingot: 20 }, 30000),
 ];
 
 /* ───────────────────────────── Escalonamento por profundidade e ciclos ───────────────────────────── */
@@ -330,6 +334,22 @@ export const BEATS: Beat[] = [
     'O Ciclo 1 se completa. Mas a Canção nunca termina: recomeça, mais funda, mais forte. Os Ecos, agora, esperam por você de novo.',
     'Abra a Crônica e inicie um novo Ciclo quando estiver pronto.',
   ] },
+  { id: 'citadel_finale', trigger: 'boss:citadel_100', title: 'O Último Trono — Azrakel, Rei Demônio', lines: [
+    'O último golpe estilhaça a Coroa do Silêncio. O salão se curva — mas o trono permanece.',
+    'Azrakel ergue os olhos uma última vez: — A coroa me escolheu. Agora, escolhe você.',
+    'A luz da Árvore atravessa cem andares de cinzas. Cada guardião finalmente descansa.',
+    'Você deixa a cidadela com a Coroa Desperta e as Brasas de Gehenna: a prova de que até o silêncio pode terminar.',
+    'O mundo amanhece. No fundo do salão, pela primeira vez, o trono não projeta sombra.',
+  ], stage: { id: 'citadel_finale', title: 'O Último Trono', actors: [
+    { name: 'Você', pal: { skin: '#f0c8a0', hair: '#f0d040', body: '#3070c0', legs: '#2a3050' } },
+    { name: 'Azrakel', pal: { skin: '#b0a8b8', hair: '#ff4038', body: '#4a1018', legs: '#201018' } },
+  ], fx: 'embers', sky: '#17070b', ground: '#281014', lines: [
+    'O último golpe estilhaça a Coroa do Silêncio. O salão se curva — mas o trono permanece.',
+    'Azrakel ergue os olhos uma última vez: — A coroa me escolheu. Agora, escolhe você.',
+    'A luz da Árvore atravessa cem andares de cinzas. Cada guardião finalmente descansa.',
+    'Você deixa a cidadela com a Coroa Desperta e as Brasas de Gehenna: a prova de que até o silêncio pode terminar.',
+    'O mundo amanhece. No fundo do salão, pela primeira vez, o trono não projeta sombra.',
+  ] } },
 ];
 const INTRO_FX: StageFx[] = ['duel', 'waves', 'spiral', 'void', 'shards', 'embers', 'rain', 'petals', 'stars', 'blessing', 'quake', 'flash', 'waves', 'void', 'shards', 'duel', 'spiral', 'blessing'];
 const BOSS_INTROS: Beat[] = STORY_BOSSES.map((b, i) => {

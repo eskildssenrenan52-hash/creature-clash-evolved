@@ -2,6 +2,7 @@
 import type { Enemy, Game } from './engine';
 import { FOES, isFoe } from './foes';
 import { solidAt } from './world';
+import { fxFor } from './fx-catalog';
 
 interface FoeState { t: number; baseDef: number; dash: number }
 const state = new WeakMap<Enemy, FoeState>();
@@ -18,6 +19,7 @@ function st(e: Enemy): FoeState {
 export function foeTick(g: Game, e: Enemy, dt: number, d: number, dx: number, dy: number, aggro: number): boolean {
   if (!isFoe(e.kind) || e.boss) return false;
   const f = FOES[e.kind], s = st(e), p = g.p;
+  const visual = fxFor(`foe:${e.kind}:attack`, f.ranged ? ['miasma', 'poison'] : f.trait === 'blink' ? ['shadowstep', 'void'] : ['petclaw', 'claws']);
   const engaged = d < aggro && p.dead <= 0 && Math.hypot(e.hx - e.x, e.hy - e.y) < 260;
   s.t -= dt;
 
@@ -27,13 +29,13 @@ export function foeTick(g: Game, e: Enemy, dt: number, d: number, dx: number, dy
     const base = f.trait === 'spiral' ? e.t : Math.atan2(dy, dx), n = f.shot.n;
     for (let i = 0; i < n; i++) {
       const a = f.trait === 'spiral' ? base + i * f.shot.spread : base + (i - (n - 1) / 2) * f.shot.spread;
-      g.projs.push({ x: e.x, y: e.y - 10, vx: Math.cos(a) * f.shot.speed, vy: Math.sin(a) * f.shot.speed, life: 1.7, dmg: e.atk, from: 'e', kind: 'spore', r: 3, color: f.shot.color, ...(f.shot.slow ? { slow: true } : {}) });
+      g.projs.push({ x: e.x, y: e.y - 10, vx: Math.cos(a) * f.shot.speed, vy: Math.sin(a) * f.shot.speed, life: 1.7, dmg: e.atk, from: 'e', kind: 'spore', r: 3, color: f.shot.color, fx: visual.name, h: visual.h, ...(f.shot.slow ? { slow: true } : {}) });
     }
   }
 
   switch (f.trait) {
     case 'root': { // planta fixa: nunca anda; morde quem chega colado
-      if (engaged && d < 16 && e.cd <= 0.6) { e.cd = 1.4; g.hurtPlayer(e.atk, e.x, e.y); }
+      if (engaged && d < 16 && e.cd <= 0.6) { e.cd = 1.4; g.hurtPlayer(e.atk, e.x, e.y, visual); }
       return true;
     }
     case 'blink': { // some num clarão e reaparece ao redor do herói
@@ -45,6 +47,7 @@ export function foeTick(g: Game, e: Enemy, dt: number, d: number, dx: number, dy
             g.burst(e.x, e.y - 10, f.shot?.color ?? '#9a80ff', 10, 50);
             e.x = nx; e.y = ny; e.cd = Math.max(e.cd, 0.6);
             g.burst(e.x, e.y - 10, f.shot?.color ?? '#9a80ff', 10, 50);
+            g.fx(visual.name, e.x, e.y - 12, 0.85, false, 0.36, visual.h);
             break;
           }
         }
@@ -70,7 +73,7 @@ export function foeTick(g: Game, e: Enemy, dt: number, d: number, dx: number, dy
       }
       if (s.dash > 0) {
         s.dash -= dt;
-        if (d < 14 && e.cd <= 0) { e.cd = 1.1; g.hurtPlayer(Math.round(e.atk * 1.3), e.x, e.y); s.dash = 0; }
+        if (d < 14 && e.cd <= 0) { e.cd = 1.1; g.hurtPlayer(Math.round(e.atk * 1.3), e.x, e.y, visual); s.dash = 0; }
         return true;
       }
       return false;

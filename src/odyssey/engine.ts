@@ -31,15 +31,19 @@ import { BUILDINGS, TREASURES, ROOM, doorOf, createInterior, prepareExploration,
 import { drawBuildings, drawGroundDetails, drawInterior, drawTreasure } from './scenery';
 import { Audio } from "./audio";
 import { ABYSS_BOSS_LOOK } from "./dungeon";
+import { bossHp, bossMeleeDamage, bossPhaseCooldown, bossPhaseForHp, bossPhaseSpeed } from "./boss-tuning";
+import { CITADEL_BOSS_LOOK, CITADEL_DOOR, CITADEL_FINAL_BOSS_ID, citadelUnlocked, drawCitadelKing } from "./demon-citadel";
 import { BEASTS, beastKey } from "./bestiary";
 import { drawBeast } from "./beast-art";
-import { carveEntrances, depthAction, surfaceEntrance, drawSurfaceEntrances, drawDepth, depthLights, depthDarkness, leaveDepth, restartTutorialFloor, TUTORIAL_BOSS_ID, TUTORIAL_BOSS_LOOK, type DepthState } from "./depthplay";
+import { carveEntrances, depthAction, surfaceEntrance, drawSurfaceEntrances, drawDepth, depthLights, depthDarkness, leaveDepth, enterCitadel, restartTutorialFloor, TUTORIAL_BOSS_ID, TUTORIAL_BOSS_LOOK, type DepthState } from "./depthplay";
 import { BOAT_RECIPES } from "./archipelago";
 import { archipelagoInteract, archipelagoPrompt, archipelagoArea, onBoatCraft, updateSea, renderSea, islandTick, islandOnKill, leaveArchipelago, drawIslandProps, drawIslandAtmosphere, type SeaRun, type IslandRun } from "./sailing";
 import { objectiveWaypoint, type Waypoint } from "./waypoint";
 import { waterLife, windLife, biomeLife, bossArenaLife } from './biome-anim';
 import { STORY_BOSS_LOOK, STORY_QUESTS, ALL_ECO_BOSSES, beatsFor, depthBonus, cycleBonus, cycleBossMult, endgameDrop, actChainQuests, type Beat } from "./story";
-import { attackOf } from "./boss-attacks";
+import { arsenalFor, runMove, type BossCtx } from "./boss-arsenal";
+import { fxFor, type FxSig } from "./fx-catalog";
+import { shouldSpawnTwin, twinBossDef, twinEncounterKey } from "./boss-encounters";
 
 export const VW = 480;
 export const VH = 270;
@@ -51,7 +55,7 @@ const LEGACY_BOSS_LOOK: Record<string, { kind: EnemyKind; tint: string; scale: n
   fenrir: { kind: "wolf", tint: "#b8e4ff", scale: 2.6 },
   crystal_golem: { kind: "golem", tint: "#b080ff", scale: 2.5 },
 };
-const BOSS_LOOK: Record<string, { kind: EnemyKind; tint: string; scale: number }> = { ...LEGACY_BOSS_LOOK, ...STORY_BOSS_LOOK, ...ABYSS_BOSS_LOOK, ...SAGA_BOSS_LOOK, ...TUTORIAL_BOSS_LOOK };
+const BOSS_LOOK: Record<string, { kind: EnemyKind; tint: string; scale: number }> = { ...LEGACY_BOSS_LOOK, ...STORY_BOSS_LOOK, ...ABYSS_BOSS_LOOK, ...SAGA_BOSS_LOOK, ...TUTORIAL_BOSS_LOOK, ...CITADEL_BOSS_LOOK };
 
 /** Cor de grading por bioma legado (os biomas de fronteira usam a própria cor-base). [r, g, b, alpha] */
 const GRADES: Partial<Record<Biome, [number, number, number, number]>> = {
@@ -72,14 +76,14 @@ const AMBIENT: Partial<Record<Biome, { mode: "fall" | "rise" | "drift"; color: s
   amber: { mode: "drift", color: "#ffd080", n: 36 }, oasis: { mode: "drift", color: "#fff0b0", n: 32, glow: true }, ruins: { mode: "drift", color: "#e8d8b0", n: 24 },
 };
 
-interface BossState { def: BossDef; active: boolean; phase: 1 | 2; patT: number; attackIndex: number; charge: number; cvx: number; cvy: number }
+interface BossState { def: BossDef; active: boolean; phase: 1 | 2 | 3 | 4 | 5; patT: number; attackIndex: number; charge: number; cvx: number; cvy: number; twinKey?: string; twinMainId?: string; arsenalKey?: string; attackVisual?: FxSig }
 export interface Enemy {
   id: number; kind: EnemyKind; x: number; y: number; hx: number; hy: number; hp: number; maxhp: number; atk: number; def: number;
   speed: number; xp: number; gold: number; level: number; cd: number; hurt: number; dir: number; alive: boolean; respawn: number;
   slow: number; kbx: number; kby: number; wanderT: number; wx: number; wy: number; boss?: BossState; t: number; summoned?: boolean; elite?: boolean; species?: number;
 }
-interface Proj { x: number; y: number; vx: number; vy: number; life: number; dmg: number; from: "p" | "e"; kind: string; r: number; color: string; slow?: boolean; fx?: FxName }
-interface Tele { x: number; y: number; r: number; t: number; max: number; dmg: number }
+interface Proj { x: number; y: number; vx: number; vy: number; life: number; dmg: number; from: "p" | "e"; kind: string; r: number; color: string; slow?: boolean; fx?: FxName; h?: number }
+interface Tele { x: number; y: number; r: number; t: number; max: number; dmg: number; fx?: FxName; h?: number; color?: string; ownerId?: number }
 interface Part { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; grav: number }
 interface FText { x: number; y: number; text: string; color: string; life: number }
 export interface InvSlot { id: string; qty: number }
@@ -154,9 +158,9 @@ export class Game {
   /** Combo de 5 golpes, pausa de impacto e efeitos especiais: estado transitório, fora do save. */
   combo = 0; comboT = 0; hitStop = 0;
   vfx: FxInst[] = [];
-  fx(name: FxName, x: number, y: number, sc = 0.6, flip = false, dur = 0.34) {
+  fx(name: FxName, x: number, y: number, sc = 0.6, flip = false, dur = 0.34, h = 0) {
     if (this.vfx.length > 48) this.vfx.shift();
-    this.vfx.push(makeFx(name, x, y, sc, flip, dur));
+    this.vfx.push(makeFx(name, x, y, sc, flip, dur, 0, h));
   }
   paused = false;
   started = false;
@@ -173,6 +177,14 @@ export class Game {
   targetEnemy: Enemy | null = null;
   talkTarget: NpcDef | null = null;
   activeBoss: Enemy | null = null;
+  get encounterBosses(): Enemy[] {
+    const key = this.activeBoss?.boss?.twinKey;
+    if (key) return this.enemies.filter((e) => e.alive && e.boss?.active && e.boss.twinKey === key);
+    return this.activeBoss?.alive && this.activeBoss.boss ? [this.activeBoss] : [];
+  }
+  /** Rolações persistentes por boss-id para não rerolar o encontro ao carregar um save. */
+  twinRolls = new Map<string, boolean>();
+  private bossCallbacks: { ownerId: number; at: number; fn: () => void }[] = [];
   biome: Biome = "plains";
   biomeBanner = { name: "", t: 0 };
   live: LiveScene | null = null;
@@ -326,7 +338,7 @@ export class Game {
       const look = BOSS_LOOK[b.id];
       const e = this.makeEnemy(look.kind, b.tx * TS + 8, b.ty * TS + 8, 1);
       const cm = cycleBossMult(this.cycle);
-      e.hp = e.maxhp = Math.round(b.hp * cm.hp); e.atk = Math.round(b.atk * cm.atk); e.def = TIER[b.biome] * 3 + this.cycle * 6; e.xp = Math.round(b.xp * (1 + this.cycle * 0.5)); e.gold = b.gold; e.speed = 30; e.level = (b.id === "vael" ? 45 : BIOME_LEVEL[b.biome] + 6) + cycleBonus(this.cycle);
+      e.hp = e.maxhp = bossHp(b.hp * cm.hp); e.atk = Math.round(b.atk * cm.atk); e.def = TIER[b.biome] * 3 + this.cycle * 6; e.xp = Math.round(b.xp * (1 + this.cycle * 0.5)); e.gold = b.gold; e.speed = 30; e.level = (b.id === "vael" ? 45 : BIOME_LEVEL[b.biome] + 6) + cycleBonus(this.cycle);
       e.boss = { def: b, active: false, phase: 1, patT: 2, attackIndex: 0, charge: 0, cvx: 0, cvy: 0 };
       this.enemies.push(e);
     }
@@ -351,6 +363,15 @@ export class Game {
     this.p.x=gate.tx*TS+8;this.p.y=(gate.ty+2)*TS+8;this.clearTransition();
     this.biome=gate.biome;this.audio.biome=gate.biome;this.biomeBanner={name:`${gate.name} · Nv ${BIOME_LEVEL[gate.biome]}+`,t:3};
     this.populateFrontier();this.save();
+  }
+  travelCitadel() {
+    if (!citadelUnlocked(this.bossesDone)) { this.toast("A Cidadela só se abre após a queda de Azrakel em Gehenna.", "#ff7777"); return; }
+    if (this.depth || this.island) { this.toast("Retorne à superfície antes de viajar para a Cidadela.", "#ffb060"); return; }
+    if (this.interior) this.leaveInterior();
+    this.p.x = CITADEL_DOOR.tx * TS + 8; this.p.y = (CITADEL_DOOR.ty + 2) * TS + 8;
+    this.clearTransition(); this.biome = "obsidian"; this.audio.biome = "obsidian";
+    this.biomeBanner = { name: "Cidadela de Gehenna · extremo do mundo", t: 5 };
+    this.populateFrontier(); this.save();
   }
 
   // ---------- helpers ----------
@@ -423,32 +444,45 @@ export class Game {
     if (crit) this.shake = 3; else this.shake = Math.max(this.shake, 1.2);
     // Pausa curta de impacto: limitada para vários acertos no mesmo quadro não travarem o jogo.
     this.hitStop = Math.min(0.09, Math.max(this.hitStop, crit ? 0.08 : 0.045));
-    this.fx("impact", e.x, e.y - 10, crit ? 0.55 : 0.32, false, 0.22);
+    const hitFx = fxFor(`enemy-hit:${e.boss?.def.id ?? e.kind}`, ["impact", e.boss ? "shieldbreak" : "xspark"]);
+    this.fx(hitFx.name, e.x, e.y - 10, crit ? 0.55 : 0.32, false, 0.22, hitFx.h);
     dmg = 0;
     if (e.hp <= 0) this.killEnemy(e);
   }
   killEnemy(e: Enemy) {
     e.alive = false;
-    e.respawn = e.summoned ? -1 : 35;
+    e.respawn = e.summoned || e.boss ? -1 : 35;
     this.burst(e.x, e.y - 8, "#ffffff", 16, 80);
     this.fx("explosion", e.x, e.y - 10, e.boss ? 1.5 : 0.6, false, e.boss ? 0.6 : 0.4);
     this.audio.sfx("die");
     if (e.summoned) return;
+    const twinPartnerAlive = !!e.boss?.twinKey && this.enemies.some((x) => x !== e && x.alive && x.boss?.twinKey === e.boss!.twinKey);
     epicOnKill(this);
     petOnKill(this, e);
-    islandOnKill(this, e);
+    if (!twinPartnerAlive) islandOnKill(this, e);
     if (!e.boss && !this.island) sagaOnKill(this);
     const earned = Math.max(1, Math.round(e.xp * xpModifier(this.p.level, e.level) * luckMult(this)));
     this.gainXp(earned);
     this.p.gold += Math.round(e.gold * luckMult(this));
     this.float(e.x, e.y - 30, `+${earned} XP`, "#80ffff");
     if (e.boss) {
-      const b = e.boss.def;
-      this.bossesDone.add(b.id);
+      const state = e.boss;
+      const mainId = state.twinMainId ?? state.def.id;
+      const partner = state.twinKey ? this.enemies.find((x) => x !== e && x.alive && x.boss?.twinKey === state.twinKey) : undefined;
+      if (partner) {
+        this.activeBoss = partner;
+        this.audio.boss = true;
+        this.toast(`${state.def.name} caiu! Derrote ${partner.boss!.def.name} para vencer o encontro.`, "#d7b0ff");
+        this.save();
+        return;
+      }
+      const lead = this.enemies.find((x) => x.boss?.def.id === mainId);
+      const b = lead?.boss?.def ?? state.def;
+      this.bossesDone.add(mainId);
       if (b.id === TUTORIAL_BOSS_ID) { this.tutorialActive = false; this.tutorialDone = true; this.tutorialFloor = 3; this.tutorialModalPending = true; this.p.points = Math.max(this.p.points, 3); }
       this.activeBoss = null;
       this.audio.boss = false;
-      this.toast(`${b.name} foi derrotado!`, "#ffd040");
+      this.toast(`${state.twinKey ? `${b.name} e seu gêmeo foram derrotados` : `${b.name} foi derrotado`}!`, "#ffd040");
       for (const it of b.reward) if (this.addItem(it)) this.toast(`Recebeu: ${ITEMS[it].name}`);
       if (b.spirit && !this.p.spirits.includes(b.spirit)) {
         this.p.spirits.push(b.spirit);
@@ -457,9 +491,11 @@ export class Game {
         this.audio.sfx("level");
       }
       for (const en of this.enemies) if (en.summoned) en.alive = false;
-      for (const q of QUESTS) if (this.questStatus[q.id] === "active" && q.goal.kind === "boss" && q.goal.target === b.id) { this.questProg[q.id] = 1; this.toast(`Missão pronta: ${q.title}`, "#a0ffa0"); }
+      for (const q of QUESTS) if (this.questStatus[q.id] === "active" && q.goal.kind === "boss" && q.goal.target === mainId) { this.questProg[q.id] = 1; this.toast(`Missão pronta: ${q.title}`, "#a0ffa0"); }
       this.burst(e.x, e.y - 20, "#ffd040", 60, 140, 3);
-      this.fireBeats(`boss:${b.id}`); sagaOnBoss(this, b.id);
+      const victoryFx = fxFor(`boss-defeat:${mainId}`, ["bossdefeat", "holy"]);
+      this.fx(victoryFx.name, e.x, e.y - 14, 1.8, false, 0.65, victoryFx.h);
+      this.fireBeats(`boss:${mainId}`); sagaOnBoss(this, mainId);
       this.save();
       return;
     }
@@ -494,7 +530,7 @@ export class Game {
       this.burst(p.x, p.y - 10, "#ffd040", 30, 90, 2, -40);
     }
   }
-  hurtPlayer(raw: number, sx: number, sy: number) {
+  hurtPlayer(raw: number, sx: number, sy: number, visual?: FxSig) {
     const p = this.p;
     if (p.inv > 0 || p.dead > 0) return;
     const dmg = Math.max(1, Math.round((raw - this.defense() * 0.6 + (Math.random() * 4 - 2)) * damageTakenMult(this) * petGuardMult(this)));
@@ -503,6 +539,8 @@ export class Game {
     const a = Math.atan2(p.y - sy, p.x - sx);
     p.vx += Math.cos(a) * 140; p.vy += Math.sin(a) * 140;
     this.float(p.x, p.y - 24, `${dmg}`, "#ff5050");
+    const hitFx = visual ?? fxFor(`hero-hit:${Math.round(raw)}:${Math.round(sx / 16)}:${Math.round(sy / 16)}`, ["impact", "shock"]);
+    this.fx(hitFx.name, p.x, p.y - 9, 0.48, false, 0.28, hitFx.h);
     this.shake = 4;
     this.audio.sfx("hurt");
     if (p.hp <= 0) {
@@ -513,18 +551,48 @@ export class Game {
   }
   activateBoss(e: Enemy) {
     if (!e.boss || e.boss.active) return;
-    e.boss.active = true;
-    this.activeBoss = e;
+    const state = e.boss, mainId = state.twinMainId ?? state.def.id;
+    let twin = this.twinRolls.get(mainId);
+    if (twin === undefined) { twin = shouldSpawnTwin(); this.twinRolls.set(mainId, twin); }
+    if (twin && !state.twinKey) this.spawnTwinBoss(e, mainId);
+    const groupKey = state.twinKey;
+    for (const member of this.enemies) if (member === e || (groupKey && member.boss?.twinKey === groupKey)) member.boss!.active = true;
+    const lead = this.enemies.find((x) => x.boss?.def.id === mainId && x.alive);
+    this.activeBoss = lead ?? e;
     this.audio.boss = true;
     this.audio.sfx("boss");
-    this.toast(`⚔ ${e.boss.def.name} desperta!`, "#ff6060");
-    const def = e.boss.def, look = BOSS_LOOK[def.id] ?? { kind: e.kind, tint: def.color, scale: 2.5 };
+    const def = (lead?.boss?.def ?? e.boss.def), look = BOSS_LOOK[def.id] ?? { kind: e.kind, tint: def.color, scale: 2.5 };
+    this.toast(`⚔ ${groupKey ? `${def.name} e seu gêmeo despertam juntos` : `${def.name} desperta`}!`, groupKey ? "#d7b0ff" : "#ff6060");
+    const wakeFx = fxFor(`boss-wake:${mainId}`, ["summoning", "rune"]);
+    this.fx(wakeFx.name, e.x, e.y - 16, 1.4, false, 0.6, wakeFx.h);
     const card = `bosscard:${def.id}`;
     if (!this.discoveries.has(card)) {
       this.discoveries.add(card);
       startBossCard(this, { id: def.id, name: def.name, kind: look.kind, tint: look.tint, scale: look.scale, color: def.color, after: () => this.fireBeats(`boss:intro:${def.id}`) });
     } else this.fireBeats(`boss:intro:${def.id}`);
     this.shake = 8;
+    this.save();
+  }
+
+  private spawnTwinBoss(e: Enemy, mainId: string) {
+    const state = e.boss!;
+    const key = twinEncounterKey(mainId);
+    state.twinKey = key; state.twinMainId = mainId; state.arsenalKey ??= mainId;
+    const offsets = [[42, 0], [-42, 0], [0, 42], [0, -42], [52, 24], [-52, 24]];
+    const pos = offsets.map(([dx, dy]) => ({ x: e.x + dx!, y: e.y + dy! })).find((p) => !solidAt(this.world, p.x, p.y)) ?? { x: e.x + 42, y: e.y };
+    const def = twinBossDef(state.def), twin = this.makeEnemy(e.kind, pos.x, pos.y, e.level);
+    twin.x = pos.x; twin.y = pos.y; twin.hx = pos.x; twin.hy = pos.y;
+    twin.maxhp = e.maxhp; twin.hp = e.maxhp; twin.atk = e.atk; twin.def = e.def;
+    twin.xp = 0; twin.gold = 0;
+    twin.boss = { def, active: false, phase: 1, patT: 2.35, attackIndex: 0, charge: 0, cvx: 0, cvy: 0, twinKey: key, twinMainId: mainId, arsenalKey: `${mainId}#twin` };
+    this.enemies.push(twin);
+    if (this.island && mainId === state.def.id && state.def.id.startsWith("isle_")) {
+      const ids = this.island.bossIds ?? [this.island.bossId];
+      if (!ids.includes(twin.id)) ids.push(twin.id);
+      this.island.bossIds = ids;
+    }
+    const sig = fxFor(`boss-twin-arrival:${mainId}`, ["summoning", "portal"]);
+    this.fx(sig.name, twin.x, twin.y - 14, 1.5, false, 0.7, sig.h);
   }
 
   attack(aim?: { x: number; y: number }) {
@@ -543,7 +611,8 @@ export class Game {
     this.comboT = 0.9;
     const step = this.combo, finisher = step === 4;
     const look = getLook().kskin;
-    const fxName = skinFx(look, step), kb = finisher ? 1.8 : 1;
+    const heroFx = fxFor(`hero:${kind}:${look}:${step}`, [skinFx(look, step)]);
+    const fxName = heroFx.name, kb = finisher ? 1.8 : 1;
     if (finisher) this.shake = Math.max(this.shake, 4);
     const pow = this.attackPower();
     const s = this.stats();
@@ -561,7 +630,7 @@ export class Game {
         const ang = Math.abs(Math.atan2(dx * ey - dy * ex, dx * ex + dy * ey));
         if (ang < arc || d < 10 + hitR) this.damageEnemy(e, pow, dx * 120 * kb, dy * 120 * kb);
       }
-      this.fx(fxName, p.x + dx * range * 0.7, p.y - 8 + dy * range * 0.7 + (fxName === "slash" || fxName === "impact" || fxName === "blood" || fxName === "void" || fxName === "explosion" || fxName === "ice" || fxName === "nature" ? 0 : 10), finisher ? 0.95 : 0.5 + step * 0.06, dx < 0, finisher ? 0.45 : 0.3);
+      this.fx(fxName, p.x + dx * range * 0.7, p.y - 8 + dy * range * 0.7 + (fxName === "slash" || fxName === "impact" || fxName === "blood" || fxName === "void" || fxName === "explosion" || fxName === "ice" || fxName === "nature" ? 0 : 10), finisher ? 0.95 : 0.5 + step * 0.06, dx < 0, finisher ? 0.45 : 0.3, heroFx.h);
       for (let i = 0; i < 6; i++) {
         const ang = Math.atan2(dy, dx) + (i / 5 - 0.5) * arc * 2;
         this.parts.push({ x: p.x + Math.cos(ang) * range * 0.8, y: p.y - 8 + Math.sin(ang) * range * 0.8, vx: 0, vy: 0, life: 0.15, max: 0.15, color: w.color, size: 2, grav: 0 });
@@ -570,11 +639,11 @@ export class Game {
     } else if (kind === "bow") {
       p.atkCd = 0.45 * speedMul;
       this.audio.sfx("bow");
-      this.projs.push({ x: p.x, y: p.y - 8, vx: dx * 260, vy: dy * 260, life: 0.8, dmg: pow, from: "p", kind: "arrow", r: 3, color: "#f0e0c0", fx: fxName });
+      this.projs.push({ x: p.x, y: p.y - 8, vx: dx * 260, vy: dy * 260, life: 0.8, dmg: pow, from: "p", kind: "arrow", r: 3, color: "#f0e0c0", fx: fxName, h: heroFx.h });
     } else {
       p.atkCd = 0.5 * speedMul;
       this.audio.sfx("ice");
-      this.projs.push({ x: p.x, y: p.y - 8, vx: dx * 180, vy: dy * 180, life: 1, dmg: pow, from: "p", kind: "orb", r: 4, color: w.color, fx: fxName });
+      this.projs.push({ x: p.x, y: p.y - 8, vx: dx * 180, vy: dy * 180, life: 1, dmg: pow, from: "p", kind: "orb", r: 4, color: w.color, fx: fxName, h: heroFx.h });
     }
   }
 
@@ -595,21 +664,23 @@ export class Game {
     this.setDirFrom(dx, dy);
     p.attackT = 1;
     const cx = p.x, cy = p.y - 8;
+    const spiritFx = fxFor(`spirit:${id}`, id === "salamando" ? ["fireburst"] : id === "undine" ? ["iceburst"] : id === "sylph" ? ["leafwhirl"] : id === "lumina" ? ["goldenrune"] : ["renewal"]);
+    this.fx(spiritFx.name, cx, cy, 0.8, false, 0.42, spiritFx.h);
     switch (id) {
       case "salamando":
         this.audio.sfx("fire");
-        this.projs.push({ x: cx, y: cy, vx: dx * 170, vy: dy * 170, life: 1.2, dmg: s.int * 3 + 12, from: "p", kind: "fire", r: 5, color: "#ff6a20" });
+        this.projs.push({ x: cx, y: cy, vx: dx * 170, vy: dy * 170, life: 1.2, dmg: s.int * 3 + 12, from: "p", kind: "fire", r: 5, color: "#ff6a20", fx: spiritFx.name, h: spiritFx.h });
         break;
       case "undine":
         this.audio.sfx("ice");
         for (const o of [-0.25, 0, 0.25]) {
           const ang = Math.atan2(dy, dx) + o;
-          this.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * 210, vy: Math.sin(ang) * 210, life: 0.9, dmg: s.int * 1.8 + 8, from: "p", kind: "ice", r: 4, color: "#80d8ff", slow: true });
+          this.projs.push({ x: cx, y: cy, vx: Math.cos(ang) * 210, vy: Math.sin(ang) * 210, life: 0.9, dmg: s.int * 1.8 + 8, from: "p", kind: "ice", r: 4, color: "#80d8ff", slow: true, fx: spiritFx.name, h: spiritFx.h });
         }
         break;
       case "sylph":
         this.audio.sfx("wind");
-        this.fx("wind", cx, cy + 14, 1.3, false, 0.45);
+        this.fx(spiritFx.name, cx, cy + 14, 1.3, false, 0.45, spiritFx.h);
         for (let i = 0; i < 40; i++) {
           const ang = (i / 40) * Math.PI * 2;
           this.parts.push({ x: cx, y: cy, vx: Math.cos(ang) * 140, vy: Math.sin(ang) * 140, life: 0.4, max: 0.4, color: i % 2 ? "#b0ffb0" : "#ffffff", size: 2, grav: 0 });
@@ -623,7 +694,7 @@ export class Game {
       case "lumina": {
         this.audio.sfx("light");
         const tx = cx + a.x * (Math.hypot(a.x, a.y) > 1 ? 1 : 50), ty = cy + a.y * (Math.hypot(a.x, a.y) > 1 ? 1 : 50);
-        this.teles.push({ x: tx, y: ty, r: 48, t: 0.35, max: 0.35, dmg: -(s.int * 4 + 25) });
+        this.teles.push({ x: tx, y: ty, r: 48, t: 0.35, max: 0.35, dmg: -(s.int * 4 + 25), fx: spiritFx.name, h: spiritFx.h, color: "#fff4a0" });
         break;
       }
       case "dryad": {
@@ -632,7 +703,7 @@ export class Game {
         p.hp = Math.min(this.maxHp(), p.hp + h);
         this.float(p.x, p.y - 28, `+${h}`, "#70ff90");
         this.burst(p.x, p.y - 8, "#70ff90", 24, 50, 2, -60);
-        this.fx("nature", p.x, p.y - 10, 0.8, false, 0.5);
+        this.fx(spiritFx.name, p.x, p.y - 10, 0.8, false, 0.5, spiritFx.h);
         break;
       }
     }
@@ -862,9 +933,9 @@ export class Game {
     this.audio.sfx("level"); this.save();
     return true;
   }
-  retireDefeatedBosses() { for (const e of this.enemies) if (e.boss && this.bossesDone.has(e.boss.def.id)) { e.alive = false; e.respawn = -1; } }
+  retireDefeatedBosses() { for (const e of this.enemies) if (e.boss && this.bossesDone.has(e.boss.twinMainId ?? e.boss.def.id)) { e.alive = false; e.respawn = -1; } }
   rebuildEnemies() {
-    this.enemies = []; this.projs = []; this.teles = []; this.activeBoss = null; this.audio.boss = false; this.frontierSector = "";
+    this.enemies = []; this.projs = []; this.teles = []; this.bossCallbacks = []; this.activeBoss = null; this.audio.boss = false; this.frontierSector = "";
     this.spawnEnemies(); this.populateFrontier(); this.retireDefeatedBosses();
   }
 
@@ -980,6 +1051,15 @@ export class Game {
     if (!blocked(o.x, o.y + dy)) o.y += dy;
   }
 
+  private tickBossCallbacks() {
+    const ready: typeof this.bossCallbacks = [];
+    this.bossCallbacks = this.bossCallbacks.filter((cb) => { if (cb.at <= this.clock) { ready.push(cb); return false; } return true; });
+    for (const cb of ready) {
+      const owner = this.enemies.find((x) => x.id === cb.ownerId);
+      if (owner?.alive && owner.boss?.active) cb.fn();
+    }
+  }
+
   update(dt: number) {
     if (this.started && !this.paused && liveTick(this, dt)) { this.transition = Math.max(0, this.transition - dt); this.updateFx(dt); return; }
     if (!this.started || this.paused || this.dialog || this.openStation || this.cutscene) { this.updateFx(dt * 0.0); return; }
@@ -994,6 +1074,7 @@ export class Game {
     this.actionCooldown = Math.max(0,this.actionCooldown-dt);
     growPlots(this.settlement,dt,!this.interior && this.raining);
     this.clock += dt;
+    this.tickBossCallbacks();
     this.transition = Math.max(0, this.transition-dt);
     this.doorCooldown = Math.max(0, this.doorCooldown-dt);
     this.time = (this.time + dt / 480) % 1;
@@ -1011,7 +1092,7 @@ export class Game {
         const s = STATUES.find((x) => x.id === p.respawnStatue) ?? STATUES[0]; if (!s) return;
         p.x = s.tx * TS + 8; p.y = (s.ty + 2) * TS + 8; p.hp = Math.ceil(this.maxHp() / 2); p.mp = this.maxMp();
         p.gold = Math.floor(p.gold * 0.9);
-        if (this.activeBoss?.boss) { const b = this.activeBoss; b.hp = b.maxhp; if (b.boss) { b.boss.active = false; b.boss.phase = 1; } b.x = b.hx; b.y = b.hy; this.activeBoss = null; this.audio.boss = false; for (const e of this.enemies) if (e.summoned) e.alive = false; }
+        if (this.activeBoss?.boss) this.resetBossEncounter(this.activeBoss);
       }
       this.updateFx(dt); return;
     }
@@ -1128,9 +1209,10 @@ export class Game {
         if (def.ranged && e.cd <= 0 && d < 130) {
           e.cd = 2 + Math.random();
           const c = e.kind === "shade" ? "#d040ff" : "#e0ff60";
-          this.projs.push({ x: e.x, y: e.y - 10, vx: (dx / d) * 110, vy: (dy / d) * 110, life: 1.6, dmg: e.atk, from: "e", kind: e.kind === "shade" ? "dark" : "spore", r: 3, color: c });
+          const attackFx = fxFor(`enemy-attack:${e.kind}`, [e.kind === "shade" ? "shadowstep" : "miasma", "poison"]);
+          this.projs.push({ x: e.x, y: e.y - 10, vx: (dx / d) * 110, vy: (dy / d) * 110, life: 1.6, dmg: e.atk, from: "e", kind: e.kind === "shade" ? "dark" : "spore", r: 3, color: c, fx: attackFx.name, h: attackFx.h });
         }
-        if (!def.ranged && d < 14 && e.cd <= 0) { e.cd = 1.1; this.hurtPlayer(e.atk, e.x, e.y); }
+        if (!def.ranged && d < 14 && e.cd <= 0) { e.cd = 1.1; this.hurtPlayer(e.atk, e.x, e.y, fxFor(`enemy-attack:${e.kind}`, ["petclaw", "claws"])); }
       } else {
         e.wanderT -= dt;
         if (e.wanderT <= 0) { e.wanderT = 2 + Math.random() * 3; e.wx = e.hx + (Math.random() - 0.5) * 80; e.wy = e.hy + (Math.random() - 0.5) * 80; }
@@ -1141,62 +1223,77 @@ export class Game {
     }
   }
 
+  private resetBossEncounter(e: Enemy) {
+    const key = e.boss?.twinKey;
+    for (const member of this.enemies) {
+      if (!member.boss || (member !== e && (!key || member.boss.twinKey !== key))) continue;
+      member.boss.active = false; member.boss.phase = 1; member.boss.patT = 2; member.boss.attackIndex = 0; member.boss.charge = 0;
+      member.hp = member.maxhp; member.x = member.hx; member.y = member.hy;
+    }
+    this.bossCallbacks = this.bossCallbacks.filter((cb) => !this.enemies.some((x) => x.id === cb.ownerId && x.boss?.twinKey === key));
+    this.activeBoss = null; this.audio.boss = false;
+    for (const minion of this.enemies) if (minion.summoned) minion.alive = false;
+  }
+
   updateBoss(e: Enemy, dt: number, d: number, dx: number, dy: number) {
     const bs = e.boss; if (!bs) return;
     const p = this.p;
     if (!bs.active) { if (d < 130 && p.dead <= 0) this.activateBoss(e); return; }
-    if (d > 500) { bs.active = false; e.hp = e.maxhp; e.x = e.hx; e.y = e.hy; this.activeBoss = null; this.audio.boss = false; return; }
-    if (bs.phase === 1 && e.hp < e.maxhp / 2) {
-      bs.phase = 2; this.toast(`${bs.def.name} entra em fúria!`, "#ff4040"); this.shake = 10; this.audio.sfx("boss");
-      this.burst(e.x, e.y - 20, "#ff4040", 40, 120, 3);
+    if (d > 500) { this.resetBossEncounter(e); return; }
+    const spawnAdds = (n: number, visual?: FxSig) => {
+      for (let i = 0; i < n; i++) {
+        const m = this.makeEnemy(bs.def.minion, e.x + (Math.random() - 0.5) * 70, e.y + (Math.random() - 0.5) * 70, enemyLevel(bs.def.biome, bs.def.minion) + cycleBonus(this.cycle));
+        m.summoned = true; m.hx = e.hx; m.hy = e.hy;
+        if (!solidAt(this.world, m.x, m.y)) { this.enemies.push(m); this.fx(visual?.name ?? "summoning", m.x, m.y - 8, 0.72, false, 0.32, visual?.h ?? 0); }
+      }
+    };
+    const reachedPhase = bossPhaseForHp(e.hp, e.maxhp);
+    if (reachedPhase > bs.phase) {
+      const previous = bs.phase; bs.phase = reachedPhase;
+      const phaseFx = ["phasechange", "shieldbreak", "thunderclap", "enrage"] as const;
+      const phaseName = ["", "", "A Caçada", "O Cerco", "A Ruptura", "A Coroa Desperta"] as const;
+      for (let phase = previous + 1; phase <= reachedPhase; phase++) {
+        const sig = fxFor(`boss-phase:${bs.twinMainId ?? bs.def.id}:${bs.arsenalKey ?? bs.def.id}:${phase}`, [phaseFx[Math.min(phase - 2, phaseFx.length - 1)]!, "phasechange"]);
+        const tint = phase >= 5 ? "#ff3428" : phase >= 4 ? "#db53ff" : phase >= 3 ? "#ff7844" : "#ffbc52";
+        this.toast(`${bs.def.name} · Fase ${phase}/5: ${phaseName[phase]}.`, tint);
+        this.shake = Math.max(this.shake, 8 + phase); this.audio.sfx("boss");
+        this.burst(e.x, e.y - 20, tint, 36 + phase * 5, 100 + phase * 12, 3);
+        this.fx(sig.name, e.x, e.y - 16, 1.2 + phase * 0.08, false, 0.62, sig.h);
+        if (phase >= 3) spawnAdds(phase >= 5 ? 4 : phase === 4 ? 3 : 2, sig);
+      }
     }
-    const ph2 = bs.phase === 2;
+    const ph2 = bs.phase > 1;
     if (bs.charge > 0) {
       bs.charge -= dt;
       this.moveBody(e, bs.cvx * dt, bs.cvy * dt, 10, 6);
       if (Math.random() < 0.5) this.parts.push({ x: e.x, y: e.y, vx: 0, vy: -10, life: 0.4, max: 0.4, color: bs.def.color, size: 3, grav: 0 });
-      if (d < 26) this.hurtPlayer(e.atk * 1.3, e.x, e.y);
+      if (d < 26) this.hurtPlayer(bossMeleeDamage(e.atk * 1.3), e.x, e.y, bs.attackVisual);
       return;
     }
-    // chase
-    if (d > 24) this.moveBody(e, (dx / d) * e.speed * (ph2 ? 1.4 : 1) * dt, (dy / d) * e.speed * (ph2 ? 1.4 : 1) * dt, 10, 6);
+    if (d > 24) this.moveBody(e, (dx / d) * e.speed * bossPhaseSpeed(bs.phase) * dt, (dy / d) * e.speed * bossPhaseSpeed(bs.phase) * dt, 10, 6);
     if (Math.abs(dx) > 4) e.dir = dx < 0 ? 1 : 2;
-    if (d < 28 && e.cd <= 0) { e.cd = 1; this.hurtPlayer(e.atk, e.x, e.y); }
+    if (d < 28 && e.cd <= 0) { e.cd = bossPhaseCooldown(bs.phase); this.hurtPlayer(bossMeleeDamage(e.atk), e.x, e.y, bs.attackVisual); }
     bs.patT -= dt;
     if (bs.patT > 0) return;
-    const atk = attackOf(bs.def, bs.attackIndex++); bs.patT = (ph2 ? atk.cooldown * .62 : atk.cooldown) * (0.9 + Math.random() * .2);
-    const c = atk.color, hit = e.atk * atk.power;
-    const projectile = (a: number, speed: number, r = 4, life = 2.4) => this.projs.push({ x: e.x, y: e.y - 14, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, life, dmg: hit, from: "e", kind: "boss", r, color: c });
-    const n = ph2 ? atk.count + 4 : atk.count, base = Math.atan2(dy, dx);
-    if (atk.shape === "ring" || atk.shape === "nova") {
-      const rings = atk.shape === "nova" ? 2 : 1; for (let ring = 0; ring < rings; ring++) for (let i = 0; i < n; i++) projectile((i / n) * Math.PI * 2 + ring * .18, 72 + ring * 38, 3 + ring, 2.4);
-      this.burst(e.x, e.y - 14, c, 16 + n, 90, 2); this.audio.sfx("fire");
-    } else if (atk.shape === "spiral" || atk.shape === "vortex" || atk.shape === "constellation") {
-      for (let i = 0; i < n + 8; i++) { const a = base + i * (atk.shape === "vortex" ? .42 : .58); projectile(a, atk.shape === "vortex" ? 58 + i * 3 : 82 + (i % 3) * 15, 3, 2.8); }
-      this.burst(e.x, e.y - 14, c, 24, 70, 2); this.audio.sfx("wind");
-    } else if (atk.shape === "blades" || atk.shape === "cross") {
-      const arms = atk.shape === "cross" ? 4 : n; for (let i = 0; i < arms; i++) projectile(base + (i / arms) * (atk.shape === "cross" ? Math.PI * 2 : atk.spread * (i - arms / 2)), 150, 5, 1.8);
-      this.shake = 5; this.audio.sfx("swing");
-    } else if (atk.shape === "fan" || atk.shape === "serpent") {
-      for (let i = 0; i < n; i++) projectile(base + (i / Math.max(1, n - 1) - .5) * atk.spread * 4, 125 + (i % 3) * 18, 3, 2.2);
-      this.audio.sfx("bow");
-    } else if (atk.shape === "beam" || atk.shape === "pulse") {
-      for (let i = -2; i <= 2; i++) projectile(base + i * .07, 190, 5, 1.5);
-      this.parts.push({ x: e.x, y: e.y - 12, vx: 0, vy: 0, life: .45, max: .45, color: c, size: 10, grav: 0 }); this.audio.sfx("light");
-    } else if (atk.shape === "meteor" || atk.shape === "minefield" || atk.shape === "ground") {
-      for (let i = 0; i < n; i++) { const ox = (Math.random() - .5) * 130, oy = (Math.random() - .5) * 100; this.teles.push({ x: p.x + ox, y: p.y + oy, r: 13 + (i % 3) * 5, t: atk.shape === "meteor" ? .8 : 1.15, max: atk.shape === "meteor" ? .8 : 1.15, dmg: hit }); }
-      this.burst(p.x, p.y - 8, c, 18, 80, 2);
-    } else if (atk.shape === "prison") {
-      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; this.teles.push({ x: p.x + Math.cos(a) * 34, y: p.y + Math.sin(a) * 28, r: 12, t: 1.3, max: 1.3, dmg: hit }); }
-      this.toast(`${bs.def.name}: ${atk.name}`, c);
-    } else if (atk.shape === "clone" || atk.shape === "summon") {
-      const amount = atk.shape === "clone" ? 2 : 3; for (let i = 0; i < amount; i++) { const m = this.makeEnemy(bs.def.minion, e.x + (Math.random() - .5) * 70, e.y + (Math.random() - .5) * 70, enemyLevel(bs.def.biome, bs.def.minion) + cycleBonus(this.cycle)); m.summoned = true; m.hx = e.hx; m.hy = e.hy; if (!solidAt(this.world, m.x, m.y)) { this.enemies.push(m); this.burst(m.x, m.y - 6, c, 14, 70); } }
-      this.toast(`${bs.def.name}: ${atk.name}`, c);
-    } else if (atk.shape === "tele") {
-      for (let i = 0; i < n; i++) this.teles.push({ x: p.x + (i ? (Math.random() - .5) * 110 : 0), y: p.y + (i ? (Math.random() - .5) * 90 : 0), r: 20, t: 1.05, max: 1.05, dmg: hit });
-    } else if (atk.shape === "charge") {
-      this.teles.push({ x: p.x, y: p.y, r: 16, t: .65, max: .65, dmg: 0 }); bs.charge = .75; bs.cvx = (dx / d) * 250; bs.cvy = (dy / d) * 250; this.audio.sfx("wind");
-    }
+    const moves = arsenalFor(bs.arsenalKey ?? bs.def.id);
+    const atk = moves[bs.attackIndex++ % moves.length]!;
+    bs.patT = atk.cooldown * bossPhaseCooldown(bs.phase) * (0.9 + Math.random() * 0.2);
+    bs.attackVisual = atk.signature;
+    this.fx(atk.signature.name, e.x, e.y - 15, 1.05, false, 0.42, atk.signature.h);
+    const context: BossCtx = {
+      get ex() { return e.x; }, get ey() { return e.y; }, get px() { return p.x; }, get py() { return p.y; },
+      hit: e.atk, ph2, phase: bs.phase, color: bs.def.color,
+      shot: (x, y, vx, vy, dmg, r = 3, life = 2.4) => this.projs.push({ x, y, vx, vy, life, dmg, from: "e", kind: "boss", r, color: bs.def.color, fx: atk.signature.name, h: atk.signature.h }),
+      tele: (x, y, r, delay, dmg) => this.teles.push({ x, y, r, t: delay, max: delay, dmg, fx: atk.signature.name, h: atk.signature.h, color: bs.def.color, ownerId: e.id }),
+      later: (delay, fn) => this.bossCallbacks.push({ ownerId: e.id, at: this.clock + Math.max(0, delay), fn }),
+      charge: (vx, vy, time) => { bs.charge = time; bs.cvx = vx; bs.cvy = vy; },
+      blink: (x, y) => { if (!solidAt(this.world, x, y)) { e.x = x; e.y = y; this.fx(atk.signature.name, x, y - 14, 1, false, 0.32, atk.signature.h); } },
+      summon: (n) => spawnAdds(n, atk.signature),
+      shake: (amount) => { this.shake = Math.max(this.shake, amount); },
+      sfx: (name) => this.audio.sfx(name as Parameters<typeof this.audio.sfx>[0]),
+      fx: (x, y, sc) => this.fx(atk.signature.name, x, y, sc, false, 0.42, atk.signature.h),
+    };
+    runMove(atk, context);
     this.enemies = this.enemies.filter((x) => !(x.summoned && !x.alive));
   }
 
@@ -1213,7 +1310,7 @@ export class Game {
             if (pr.kind === "fire") this.explode(pr);
             else {
               this.damageEnemy(e, pr.dmg, pr.vx * 0.4, pr.vy * 0.4, pr.color);
-              if (pr.fx) this.fx(pr.fx, e.x, e.y - 8, 0.6, pr.vx < 0, 0.32);
+              if (pr.fx) this.fx(pr.fx, e.x, e.y - 8, 0.6, pr.vx < 0, 0.32, pr.h ?? 0);
               else if (pr.slow) this.fx("ice", e.x, e.y - 8, 0.45, false, 0.3);
               if (pr.slow) { e.slow = 2.5; this.burst(e.x, e.y - 8, "#c0f0ff", 6, 30); }
             }
@@ -1221,7 +1318,7 @@ export class Game {
           }
         }
       } else if (Math.hypot(p.x - pr.x, p.y - 8 - pr.y) < 6 + pr.r) {
-        this.hurtPlayer(pr.dmg, pr.x - pr.vx, pr.y - pr.vy);
+        this.hurtPlayer(pr.dmg, pr.x - pr.vx, pr.y - pr.vy, pr.fx ? { name: pr.fx, h: pr.h ?? 0 } : undefined);
         pr.life = 0;
       }
     }
@@ -1231,12 +1328,12 @@ export class Game {
       t.t -= dt;
       if (t.t <= 0) {
         if (t.dmg > 0) {
-          if (Math.hypot(p.x - t.x, p.y - t.y) < t.r) this.hurtPlayer(t.dmg, t.x, t.y);
-          this.burst(t.x, t.y, "#ff8040", 20, 90, 2); this.fx("explosion", t.x, t.y, 0.8, false, 0.4); this.audio.sfx("explode"); this.shake = Math.max(this.shake, 3);
+          if (Math.hypot(p.x - t.x, p.y - t.y) < t.r) this.hurtPlayer(t.dmg, t.x, t.y, t.fx ? { name: t.fx, h: t.h ?? 0 } : undefined);
+          this.burst(t.x, t.y, t.color ?? "#ff8040", 20, 90, 2); this.fx(t.fx ?? "explosion", t.x, t.y, 0.8, false, 0.4, t.h ?? 0); this.audio.sfx("explode"); this.shake = Math.max(this.shake, 3);
         } else if (t.dmg < 0) {
           for (const e of this.enemies) if (e.alive && Math.hypot(e.x - t.x, e.y - 8 - t.y) < t.r + (e.boss ? 16 : 0)) this.damageEnemy(e, -t.dmg, 0, 0, "#fff4a0", e.kind === "shade" || e.boss?.def.id === "crystal_golem" ? 3 : 1);
           this.burst(t.x, t.y, "#fff4a0", 50, 140, 2, -20);
-          this.fx("holy", t.x, t.y + 12, 1.4, false, 0.5);
+          this.fx(t.fx ?? "holy", t.x, t.y + 12, 1.4, false, 0.5, t.h ?? 0);
           this.shake = 5;
         }
       }
@@ -1328,13 +1425,15 @@ export class Game {
     for (const t of this.teles) {
       const k = 1 - t.t / t.max;
       if (t.dmg >= 0) {
-        c.strokeStyle = "rgba(255,40,40,0.9)"; c.lineWidth = 1;
+        c.save(); c.strokeStyle = t.color ?? "#ff2828"; c.lineWidth = 1; c.globalAlpha = 0.9;
         c.beginPath(); c.ellipse(t.x, t.y, t.r, t.r * 0.6, 0, 0, Math.PI * 2); c.stroke();
-        c.fillStyle = `rgba(255,60,30,${0.15 + k * 0.35})`;
+        c.globalAlpha = 0.15 + k * 0.35; c.fillStyle = t.color ?? "#ff3c1e";
         c.beginPath(); c.ellipse(t.x, t.y, t.r * k, t.r * 0.6 * k, 0, 0, Math.PI * 2); c.fill();
+        c.restore();
       } else {
-        c.fillStyle = `rgba(255,250,180,${0.3 + k * 0.5})`;
+        c.save(); c.globalAlpha = 0.3 + k * 0.5; c.fillStyle = t.color ?? "#fffab4";
         c.beginPath(); c.arc(t.x, t.y, t.r * (0.3 + k * 0.7), 0, Math.PI * 2); c.fill();
+        c.restore();
       }
     }
     // sprites sorted
@@ -1377,12 +1476,16 @@ export class Game {
     for (const e of this.enemies) {
       if (this.interior || !e.alive || e.x < cx - 40 || e.x > cx + this.viewWidth + 40 || e.y < cy - 40 || e.y > cy + this.viewHeight + 50) continue;
       draws.push({ y: e.y, f: () => {
-        this.shadow(c, e.x, e.y, e.boss ? 7 * BOSS_LOOK[e.boss.def.id].scale : 6, e.boss ? 0.38 : 0.3);
+        const look = e.boss ? BOSS_LOOK[e.boss.def.id] ?? { kind: e.kind, tint: e.boss.def.color, scale: 2.5 } : undefined;
+        this.shadow(c, e.x, e.y, e.boss ? 7 * look!.scale : 6, e.boss ? 0.38 : 0.3);
         if (e.boss) {
-          const look = BOSS_LOOK[e.boss.def.id];
-          if (e.boss.phase === 2) { c.fillStyle = `rgba(255,40,40,${0.2 + Math.sin(wt * 10) * 0.1})`; c.beginPath(); c.ellipse(e.x, e.y, 26, 10, 0, 0, Math.PI * 2); c.fill(); }
-          drawEnemy(c, look.kind, e.x, e.y, e.t, e.dir, e.hurt > 0, look.scale, look.tint);
-          c.fillStyle = "#ffd040"; const cyy = e.y - 18 * look.scale - 6; c.fillRect(e.x - 6, cyy, 12, 3); c.fillRect(e.x - 6, cyy - 3, 2, 3); c.fillRect(e.x - 1, cyy - 4, 2, 4); c.fillRect(e.x + 4, cyy - 3, 2, 3);
+          const phaseColors = ["#ffd04a", "#ff9c43", "#ff6547", "#df48ff", "#ff302e"];
+          const glow = phaseColors[e.boss.phase - 1] ?? phaseColors[0]!;
+          c.globalAlpha = 0.18 + Math.sin(wt * (7 + e.boss.phase)) * 0.06; c.fillStyle = glow;
+          c.beginPath(); c.ellipse(e.x, e.y, 22 + e.boss.phase * 2, 8 + e.boss.phase * 0.6, 0, 0, Math.PI * 2); c.fill(); c.globalAlpha = 1;
+          const customKing = this.depth?.profile === "citadel" && e.boss.def.id === CITADEL_FINAL_BOSS_ID && drawCitadelKing(c, e.x, e.y, wt, e.hurt > 0);
+          if (!customKing) drawEnemy(c, look!.kind, e.x, e.y, e.t, e.dir, e.hurt > 0, look!.scale, look!.tint);
+          c.fillStyle = "#ffd040"; const cyy = e.y - 18 * look!.scale - 6; c.fillRect(e.x - 6, cyy, 12, 3); c.fillRect(e.x - 6, cyy - 3, 2, 3); c.fillRect(e.x - 1, cyy - 4, 2, 4); c.fillRect(e.x + 4, cyy - 3, 2, 3);
         } else {
           const sp = e.species != null ? BEASTS[e.species] : undefined;
           if (e.elite) { c.fillStyle = `rgba(255,200,60,${0.25 + Math.sin(wt * 6) * 0.1})`; c.beginPath(); c.ellipse(e.x, e.y, 11, 4, 0, 0, Math.PI * 2); c.fill(); if (sp) drawBeast(c, sp, e.x, e.y, e.t, e.dir, e.hurt > 0, 1.3); else drawEnemy(c, e.kind, e.x, e.y, e.t, e.dir, e.hurt > 0, 1.3, "#e8b040"); }
@@ -1653,7 +1756,7 @@ export class Game {
       const data = {
         p: { ...this.p, ...(this.interior ? this.returnPosition : {}), ...(this.depth ? this.depthReturn : {}), ...(this.sea || this.island ? this.seaReturn : {}), dead: 0 }, abyssBest: this.abyssBest, inventory: this.inventory, questStatus: this.questStatus, questProg: this.questProg,
         discoveries: [...this.discoveries], openedChests: [...this.openedChests],
-        settlement: this.settlement, terrainEdits:this.terrainEdits, statues: [...this.statues], bosses: [...this.bossesDone], time: this.time, cycle: this.cycle, seenBeats: [...this.seenBeats], tutorialDone: this.tutorialDone, tutorialModalPending: this.tutorialModalPending, tutorialModalDone: this.tutorialModalDone,
+        settlement: this.settlement, terrainEdits:this.terrainEdits, statues: [...this.statues], bosses: [...this.bossesDone], twinRolls: Object.fromEntries(this.twinRolls), time: this.time, cycle: this.cycle, seenBeats: [...this.seenBeats], tutorialDone: this.tutorialDone, tutorialModalPending: this.tutorialModalPending, tutorialModalDone: this.tutorialModalDone,
       };
       localStorage.setItem("golden-arrow-save", JSON.stringify(data));
       epicSave(this); petsSave(this);
@@ -1672,6 +1775,7 @@ export class Game {
       this.discoveries = new Set(d.discoveries ?? []); this.openedChests = new Set(d.openedChests ?? []);
       this.inventory = d.inventory; this.questStatus = d.questStatus; this.questProg = d.questProg;
       this.statues = new Set(d.statues); this.bossesDone = new Set(d.bosses); this.time = d.time ?? 0.3;
+      this.twinRolls = new Map(Object.entries(d.twinRolls ?? {}).map(([id, value]) => [id, !!value]));
       this.abyssBest = d.abyssBest ?? 0;
       this.cycle = d.cycle ?? 0; this.seenBeats = new Set(d.seenBeats ?? []);
       // Saves anteriores à primeira jornada guiada não interrompem uma campanha já iniciada.

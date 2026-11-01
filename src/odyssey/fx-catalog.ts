@@ -7,6 +7,7 @@ export interface FxSig { name: FxName; h: number }
 
 /** Passos de matiz: 0° (cor original pintada) e mais 17 tons. */
 export const HUE_STEPS = Array.from({ length: 18 }, (_, i) => i * 20);
+export const FX_SIGNATURE_CAPACITY = FX_NAMES.length * HUE_STEPS.length;
 
 const byKey = new Map<string, FxSig>();
 const taken = new Set<string>();
@@ -31,7 +32,7 @@ export function fxFor(key: string, prefer: readonly FxName[] = []): FxSig {
       return sig;
     }
   }
-  // Catálogo esgotado (720 combinações): reaproveita, mas nunca quebra o jogo.
+  // Catálogo esgotado: reaproveita com segurança, sem bloquear a simulação.
   const sig = { name: order[0] ?? "impact", h: HUE_STEPS[h0 % HUE_STEPS.length]! };
   byKey.set(key, sig);
   return sig;
@@ -39,3 +40,5 @@ export function fxFor(key: string, prefer: readonly FxName[] = []): FxSig {
 
 /** Todas as assinaturas já reservadas (usado em testes). */
 export const allSigs = () => [...byKey.entries()];
+/** Limpa o estado global entre testes; não deve ser chamado pelo jogo. */
+export function resetFxCatalogForTests() { byKey.clear(); taken.clear(); }

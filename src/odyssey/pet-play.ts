@@ -7,6 +7,7 @@ import {
   ELEMENTS, SPECIES_BY_ID, adopt, biomeElements, elementMult, fightMult, freshPets, gainPetXp, makePet, petById, petStats,
   sanitizePets, skillsFor, walkEggs, wildEgg, EGG_CHANCE, type Pet, type PetState, type EvoCtx,
 } from "./pets";
+import { fxFor } from "./fx-catalog";
 
 const KEY = "golden-arrow-pets";
 interface Body { x: number; y: number; dir: number; moving: boolean; frameT: number; atk: number; cd: number; target: number | null; skillCd: Record<string, number>; healT: number; shieldT: number; lastPX: number; lastPY: number; stepAcc: number; hungerT: number; notified: Set<string> }
@@ -96,6 +97,9 @@ export function petTick(g: Game, dt: number) {
       const em = elementMult(sp.element, biomeElements(g.biome)[0]) > 1 ? 1.15 : 1; // vantagem de terreno
       const raw = (s.atk * 1.6 + pet.level) * f * em * (k?.power ?? 1);
       const color = ELEMENTS[sp.element].color;
+      const actionId = k?.id ?? "mordida";
+      const visual = fxFor(`pet:${pet.uid}:${sp.id}:${actionId}`, k?.kind === "cura" ? ["bondhearts", "renewal"] : k?.kind === "escudo" ? ["barrier", "spiritglow"] : k?.kind === "lentidao" ? ["iceburst", "petclaw"] : k?.kind === "area" ? ["pettail", "impact"] : ["petclaw", "claws"]);
+      g.fx(visual.name, b.x, b.y - 8, 0.78, false, 0.4, visual.h);
       if (k?.kind === "area") { for (const e of g.enemies) if (e.alive && Math.hypot(e.x - b.x, e.y - b.y) < 48) g.damageEnemy(e, raw, 0, 0, color); g.burst(b.x, b.y - 6, color, 18, 90); }
       else if (k?.kind === "lentidao") { for (const e of g.enemies) if (e.alive && Math.hypot(e.x - b.x, e.y - b.y) < 60) e.slow = Math.max(e.slow, k.power); g.burst(b.x, b.y - 6, color, 14, 70); g.damageEnemy(foe, raw * 0.6, 0, 0, color); }
       else if (k?.kind === "cura") { const h = Math.round(g.maxHp() * k.power); p.hp = Math.min(g.maxHp(), p.hp + h); g.float(p.x, p.y - 26, `+${h}`, "#80ff80"); }

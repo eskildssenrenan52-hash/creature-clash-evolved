@@ -1,8 +1,10 @@
 import { FRONTIER_GATES } from "@/odyssey/frontier";
+import { CITADEL_DOOR, CITADEL_FLOORS, citadelBest, citadelUnlocked } from "@/odyssey/demon-citadel";
 import worldArt from "@/assets/mana-world.jpg";
+import gehennaRelicArt from "@/assets/depths/game/gehenna-relic.png";
 import { CROPS, STRUCTURES, isPlayerHome, upgradeHome, type Tool, type CropKind, type StructureKind } from "@/odyssey/settlement";
 import { FURNITURE, HOME_LEVELS, type FurnitureKind } from "@/odyssey/home";
-import { Pickaxe, Axe, Shovel, Sprout, Droplets, Hammer, House, Anvil, ChevronRight, Leaf, Sun, Swords, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from "lucide-react";
+import { Pickaxe, Axe, Shovel, Sprout, Droplets, Hammer, House, Anvil, ChevronRight, Leaf, Sun, Swords, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Crown } from "lucide-react";
 import { BIOME_LIST } from "@/odyssey/world";
 import { BIOME_NAMES } from "@/odyssey/data";
 import { createFileRoute } from "@tanstack/react-router";
@@ -55,14 +57,18 @@ function Icon({ id, size = 32 }: { id: string; size?: number }) {
   useEffect(() => {
     const c = ref.current?.getContext("2d"); if (!c) return;
     const it = ITEMS[id]; if (!it) return;
+    const citadelIcon = id === "gehenna_ember" || id === "azrakel_crown" ? new Image() : null;
+    if (citadelIcon) citadelIcon.src = gehennaRelicArt;
     const paint = () => {
       c.clearRect(0, 0, 32, 32); c.imageSmoothingEnabled = false;
+      if (citadelIcon?.complete && citadelIcon.naturalWidth > 0) { c.drawImage(citadelIcon, 0, 0, 32, 32); return; }
       if (!it.sprite || !drawKIcon(c, it.sprite, 0, 0, 32)) drawItemIcon(c, id, it.color, it.type, 0, 0, 2);
     };
     paint();
     const img = it.sprite ? kImage(`items/${it.sprite}`) : null;
     img?.addEventListener("load", paint);
-    return () => img?.removeEventListener("load", paint);
+    citadelIcon?.addEventListener("load", paint);
+    return () => { img?.removeEventListener("load", paint); citadelIcon?.removeEventListener("load", paint); };
   }, [id]);
   return <canvas ref={ref} width={32} height={32} style={{ width: size, height: size, imageRendering: "pixelated" }} />;
 }
@@ -84,9 +90,10 @@ function Bar({ v, max, cls, label }: { v: number; max: number; cls: string; labe
   );
 }
 
-export function OdysseyScreen() {
+export function OdysseyScreen({ startImmediately = false }: { startImmediately?: boolean } = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
+  const startRef = useRef<(load: boolean) => void>(() => {});
   const [, setTick] = useState(0);
   const [panel, setPanel] = useState<Panel>(null);
   const [title, setTitle] = useState(true);
@@ -197,18 +204,25 @@ export function OdysseyScreen() {
 
   const g = gameRef.current;
   const start = (load: boolean) => {
-    if (!g) return;
-    if (load) g.load();
-    g.started = true; g.audio.init(); setTitle(false);
+    const game = gameRef.current;
+    if (!game) return;
+    if (load) game.load();
+    game.started = true; game.audio.init(); setTitle(false);
     if (!load) {
-      petsNewGame(g); g.fireBeats("new"); epicNewGame(g);
-      if (!g.tutorialDone) { startTutorial(g); setTutorialMode("dungeon"); setPanel(null); }
-      else { setPanel("quest"); g.toast("Fale com Gorm na vila ou comece seu lar na clareira a leste.", "#ffd040"); }
+      petsNewGame(game); game.fireBeats("new"); epicNewGame(game);
+      if (!game.tutorialDone) { startTutorial(game); setTutorialMode("dungeon"); setPanel(null); }
+      else { setPanel("quest"); game.toast("Fale com Gorm na vila ou comece seu lar na clareira a leste.", "#ffd040"); }
     } else {
-      setPanel(g.tutorialModalPending ? null : "quest");
-      if (g.tutorialModalPending) setTutorialMode("modals");
+      setPanel(game.tutorialModalPending ? null : "quest");
+      if (game.tutorialModalPending) setTutorialMode("modals");
     }
   };
+  startRef.current = start;
+  useEffect(() => {
+    if (!startImmediately) return;
+    const timer = window.setTimeout(() => startRef.current(Game.hasSave()), 0);
+    return () => window.clearTimeout(timer);
+  }, [startImmediately]);
   const onMouse = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!g || !g.started) return;
     e.preventDefault();
@@ -265,9 +279,11 @@ export function OdysseyScreen() {
             </div>
             {g.biomeBanner.t > 0 && <div className="absolute top-[18%] left-1/2 -translate-x-1/2 text-primary text-lg biome-banner text-center" style={{ opacity: Math.min(1, g.biomeBanner.t) }}>{g.biomeBanner.name}</div>}
             {g.activeBoss && g.activeBoss.alive && g.activeBoss.boss && (
-              <div className="boss-plate absolute top-16 left-1/2 -translate-x-1/2 w-1/2 p-2 text-[12px]">
-                <div className="flex justify-between"><span className="text-destructive">{g.activeBoss.boss.def.name}</span><span>Fase {g.activeBoss.boss.phase}</span></div>
-                <div className="h-3 bg-background border border-border"><div className="h-full bg-destructive" style={{ width: `${(g.activeBoss.hp / g.activeBoss.maxhp) * 100}%` }} /></div>
+              <div className="boss-plate absolute top-16 left-1/2 -translate-x-1/2 w-1/2 p-2 text-[12px] space-y-1">
+                {g.encounterBosses.map((boss) => boss.boss && <div key={boss.id}>
+                  <div className="flex justify-between"><span style={{ color: boss.boss.def.color }}>{boss.boss.def.name}</span><span>Fase {boss.boss.phase}/5</span></div>
+                  <div className="h-2 bg-background border border-border"><div className="h-full" style={{ width: `${(boss.hp / boss.maxhp) * 100}%`, backgroundColor: boss.boss.def.color }} /></div>
+                </div>)}
               </div>
             )}
 
@@ -368,6 +384,7 @@ export function OdysseyScreen() {
                 <div className="atlas-map relative w-full" style={{ aspectRatio: `${W}/${H}` }}>
                   <img src={mapUrl} alt="Mapa do mundo" className="w-full h-full" style={{ imageRendering: "pixelated" }} />
                   <div className="absolute w-2 h-2 bg-destructive animate-pulse" style={{ left: `${(p.x / 16 / W) * 100}%`, top: `${(p.y / 16 / H) * 100}%` }} />
+                  <Button variant="game" disabled={!citadelUnlocked(g.bossesDone) || !!g.depth || !!g.island} onClick={() => { g.travelCitadel(); setPanel(null); }} title={`Cidadela de Gehenna · ${citadelBest(g.discoveries)}/${CITADEL_FLOORS}`} aria-label="Viajar para a Cidadela de Gehenna" className="atlas-marker absolute -translate-x-1/2 -translate-y-1/2 disabled:opacity-40" style={{ left: `${(CITADEL_DOOR.tx / W) * 100}%`, top: `${(CITADEL_DOOR.ty / H) * 100}%` }}><Crown size={13} className="text-orange-300" /></Button>
                   {STATUES.map((s) => {
                     const on = g.statues.has(s.id);
                     return <Button variant="game" key={s.id} disabled={!on} onClick={() => { g.travel(s.id); setPanel(null); }} title={s.name} aria-label={s.name} className="atlas-marker absolute -translate-x-1/2 -translate-y-1/2 disabled:opacity-40" style={{ left: `${(s.tx / W) * 100}%`, top: `${(s.ty / H) * 100}%` }}>{on ? "◆" : "◇"}</Button>;
@@ -376,6 +393,7 @@ export function OdysseyScreen() {
                 <div className="atlas-destinations">
                   <Button variant="outline" onClick={()=>{g.travel('village');setPanel(null);}}>Vila de Potos</Button>
                   {FRONTIER_GATES.map(gate=><Button variant="outline" key={gate.id} onClick={()=>{g.travelFrontier(gate.id);setPanel(null);}}><Compass size={14}/>{gate.name}</Button>)}
+                  <Button variant="outline" disabled={!citadelUnlocked(g.bossesDone) || !!g.depth || !!g.island} onClick={()=>{g.travelCitadel();setPanel(null);}}><Crown size={14}/>{citadelUnlocked(g.bossesDone) ? `Cidadela de Gehenna · ${citadelBest(g.discoveries)}/${CITADEL_FLOORS}` : "Cidadela selada · conclua Gehenna"}</Button>
                 </div>
               </Modal>
             )}
@@ -466,7 +484,7 @@ export function OdysseyScreen() {
         <div className="system-dock flex gap-1"><Button variant="ghost" size="icon" aria-label={fullscreen?'Sair da tela cheia':'Tela cheia'} title="Tela cheia" onClick={async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{g?.toast('A tela cheia não está disponível neste navegador.');}}}><GameIcon name="fullscreen"/></Button><Button variant="ghost" size="icon" disabled={title} title="Salvar jornada" aria-label="Salvar jornada" onClick={()=>{g?.save();g?.toast('Jornada salva.');}}><GameIcon name="save"/></Button><Button variant="ghost" size="icon" title="Alternar áudio" aria-label="Alternar áudio" onClick={()=>g?.audio.toggleMute()}><GameIcon name={g?.audio.muted?"mute":"sound"}/></Button></div>
       </footer>
       {!title && !liveOn && <div className="mobile-controls"><Joystick keys={g?.keys} /><Button variant="secondary" size="icon" aria-label="Atacar" onClick={()=>g?.attack()}><GameIcon name="explore"/></Button><Button variant="secondary" size="icon" aria-label="Interagir" onClick={()=>g?.interact()}><Sparkles/></Button><Button variant="secondary" size="icon" aria-label="Magia" onClick={()=>g&&g.cast(g.p.spell)}><GameIcon name="ether"/></Button><Button variant="secondary" size="icon" aria-label="Grimório" onClick={()=>setPanel(panel==='grimoire'?null:'grimoire')}><BookOpen/></Button></div>}
-      {title && <a className="game-credits" href="/game-credits.txt" target="_blank" rel="noreferrer">Créditos · Source of Mana</a>}
+      {title && <a className="game-credits" href="game-credits.txt" target="_blank" rel="noreferrer">Créditos · Source of Mana</a>}
       </div>
     </main>
   );

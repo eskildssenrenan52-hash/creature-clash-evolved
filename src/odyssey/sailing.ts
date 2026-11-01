@@ -4,16 +4,18 @@ import { startGoddess } from "./live-scenes";
  * Progresso salvo só em `discoveries` (`boat:<id>`, `isle:<id>:...`): campos aditivos, saves antigos seguem válidos.
  */
 import type { Game, Enemy } from "./engine";
+import type { Biome, BossDef } from "./data";
 import { ITEMS } from "./data";
 import { W, H, TS, T, SOLID, BIOME_LIST, hash, type World } from "./world";
 import { enemyLevel } from "./levels";
+import { bossHp } from "./boss-tuning";
 import {
   BOATS, ISLANDS, MAIN, SEA, ROCKS, CURRENTS, bestBoat, boatFromItem, coastRadius, depthAt, islandById, islandTileSpan,
   landAt, nearShore, stepBoat, windAt, ISLAND_TILES_PER_PX, type BoatDef, type BoatState, type IslandDef,
 } from "./archipelago";
 
 export interface SeaRun { boat: BoatState; def: BoatDef; t: number; wake: { x: number; y: number; life: number }[]; warnT: number }
-export interface IslandRun { def: IslandDef; ox: number; oy: number; span: number; bossId: number; seaPos: { x: number; y: number; a: number }; center: { x: number; y: number }; tick: number; parts: { x: number; y: number; s: number }[] }
+export interface IslandRun { def: IslandDef; ox: number; oy: number; span: number; bossId: number; bossIds?: number[]; seaPos: { x: number; y: number; a: number }; center: { x: number; y: number }; tick: number; parts: { x: number; y: number; s: number }[] }
 
 const MAIN_SEED = 3.1;
 const DEPTH_NAMES = ["Terra", "Águas rasas", "Costas", "Mar aberto", "Fossa abissal"];
@@ -128,6 +130,15 @@ function buildIsland(def: IslandDef, arriveA: number) {
   return { world: { tiles, biomes, nodes } as World, ox, oy, span, center: { x: cx * TS + 8, y: cy * TS + 8 }, spawn: { x: sx * TS + 8, y: sy * TS + 8 }, land };
 }
 
+export function islandBossState(island: IslandDef, enemy: Enemy, baseHp: number): NonNullable<Enemy["boss"]> {
+  const def: BossDef = {
+    id: `isle_${island.id}_boss`, name: island.boss.name, biome: island.base as Biome,
+    tx: Math.floor(enemy.x / TS), ty: Math.floor(enemy.y / TS), hp: baseHp, atk: enemy.atk,
+    xp: enemy.xp, gold: enemy.gold, color: island.boss.tint, minion: island.enemies[0]!, reward: [],
+  };
+  return { def, active: false, phase: 1, patT: 1.6, attackIndex: 0, charge: 0, cvx: 0, cvy: 0, arsenalKey: `island:${island.id}` };
+}
+
 function land(g: Game, id: string) {
   const def = islandById(id); if (!def || !g.sea) return;
   const s = g.sea, arriveA = Math.atan2(s.boat.y - def.y, s.boat.x - def.x);
@@ -143,14 +154,17 @@ function land(g: Game, id: string) {
     enemies.push(g.makeEnemy(k, x, y, enemyLevel(def.base as never, k) + def.tier * 3));
   }
   let bossId = -1;
+  const bossIds: number[] = [];
   if (!done(g, `isle:${def.id}:q1`)) {
     const bx = b.center.x - Math.cos(arriveA) * (b.span * TS * 0.18), by = b.center.y - Math.sin(arriveA) * (b.span * TS * 0.18);
     const boss = g.makeEnemy(def.boss.kind, bx, by, enemyLevel(def.base as never, def.boss.kind) + def.tier * 4 + 2);
-    boss.hp = boss.maxhp = boss.maxhp * def.boss.hp; boss.atk = Math.round(boss.atk * 1.5); boss.elite = true; boss.xp *= 12; boss.gold *= 10;
-    enemies.push(boss); bossId = boss.id;
+    const baseHp = boss.maxhp * def.boss.hp;
+    boss.hp = boss.maxhp = bossHp(baseHp); boss.atk = Math.round(boss.atk * 1.5); boss.elite = true; boss.xp *= 12; boss.gold *= 10;
+    boss.boss = islandBossState(def, boss, baseHp);
+    enemies.push(boss); bossId = boss.id; bossIds.push(boss.id);
   }
   g.enemies = enemies;
-  g.island = { def, ox: b.ox, oy: b.oy, span: b.span, bossId, seaPos: { x: s.boat.x, y: s.boat.y, a: s.boat.a + Math.PI }, center: b.center, tick: 0, parts: [] };
+  g.island = { def, ox: b.ox, oy: b.oy, span: b.span, bossId, bossIds, seaPos: { x: s.boat.x, y: s.boat.y, a: s.boat.a + Math.PI }, center: b.center, tick: 0, parts: [] };
   g.sea = null;
   const first = !done(g, `isle:${def.id}:visited`);
   g.discoveries.add(`isle:${def.id}:visited`);
@@ -204,8 +218,11 @@ function islandBlessingBeat(def: IslandDef) {
 }
 
 export function islandOnKill(g: Game, e: Enemy) {
-  const r = g.island; if (!r || e.id !== r.bossId) return;
-  r.bossId = -1; const b = r.def.boss;
+  const r = g.island; if (!r) return;
+  const ids = r.bossIds ?? [r.bossId];
+  if (!ids.includes(e.id)) return;
+  if (ids.some((id) => id !== e.id && g.enemies.some((other) => other.id === id && other.alive))) return;
+  r.bossId = -1; r.bossIds = []; const b = r.def.boss;
   g.addItem(b.drop, b.dropQty); g.shake = 8;
   g.biomeBanner = { name: `${b.name} derrotado!`, t: 4 }; g.toast(b.lore, "#f4dc91");
   complete(g, r.def, 1);

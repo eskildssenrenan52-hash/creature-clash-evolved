@@ -1,4 +1,3 @@
-\
 @echo off
 setlocal
 cd /d "%~dp0"
@@ -9,24 +8,30 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo [2/4] Instalando dependencias JavaScript...
-call bun install
-if errorlevel 1 goto :error
-echo [3/4] Compilando o jogo web...
-call bun run build
-if errorlevel 1 goto :error
-echo [4/4] Gerando APK Android debug...
-where gradle >nul 2>nul
+echo [2/4] Verificando Bash e Gradle...
+where bash >nul 2>nul
 if errorlevel 1 (
-  echo ERRO: Gradle nao encontrado no PATH.
-  echo Instale o Gradle e configure JAVA_HOME e ANDROID_HOME, ou abra a pasta android no Android Studio.
+  echo ERRO: Bash nao encontrado. Use Git Bash/WSL ou Android Studio.
   pause
   exit /b 1
 )
+where gradle >nul 2>nul
+if errorlevel 1 (
+  echo ERRO: Gradle nao encontrado no PATH.
+  echo Instale o Gradle e configure o Android SDK, ou abra a pasta android no Android Studio.
+  pause
+  exit /b 1
+)
+echo [3/4] Instalando dependencias e empacotando jogo offline...
+call bun install --frozen-lockfile
+if errorlevel 1 goto :error
+call bash scripts/package-android-offline.sh
+if errorlevel 1 goto :error
+echo [4/4] Gerando APK Android debug...
 call gradle -p android assembleDebug
 if errorlevel 1 goto :error
 echo.
-echo APK criado em: android\app\build\outputs\apk\debug\app-debug.apk
+echo APK offline criado em: android\app\build\outputs\apk\debug\app-debug.apk
 pause
 exit /b 0
 :error

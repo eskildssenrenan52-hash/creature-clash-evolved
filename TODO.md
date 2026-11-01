@@ -1,20 +1,15 @@
-## Reutilização inteligente do catálogo Kaetram
-- [x] Indexar as 1.316 entradas por categoria para seleção eficiente sem varrer o catálogo a cada frame.
-- [x] Usar correspondência exata e fallback determinístico para mobs autorais, distribuindo sprites Kaetram por inimigo.
-- [x] Reutilizar árvores, rochas, bushes, cristais e objetos Kaetram no cenário com fallback para a arte existente.
-- [x] Reutilizar effects Kaetram nos golpes de espada, lança, arco e cajado, mantendo os efeitos detalhados do jogo.
-- [x] Regenerar o APK offline com a integração visual atualizada.
+## Expansão pós-campanha — Cidadela de Gehenna
+- [ ] Preservar as oito zonas, quests, história e IDs de save da Saga Gehenna; adicionar uma entrada física da cidadela no extremo remoto do mundo.
+- [ ] Aplicar 5× HP a todos os bosses (incluindo Ecos, chefes de masmorra, Saga e líderes de ilhas) sem duplicar multiplicadores; aplicar 3× somente a contato/investida corpo a corpo.
+- [ ] Dar a bosses cinco fases progressivas com telegráficos/FX próprios, sem alterar dano de projéteis pela multiplicação melee.
+- [ ] Criar um modo de cidadela de 100 andares reaproveitando o gerador: dez temas, guardiões a cada 10 andares, inimigos escalados e checkpoints a cada 5.
+- [ ] Desbloquear a cidadela após derrotar Azrakel na Saga; incluir entrada no mapa e salvar progresso sem usar o recorde do Abismo existente.
+- [ ] Colocar Azrakel desperto no trono do andar 100, com arte IA no jogo e uma cutscene final inédita.
+- [ ] Adicionar recompensas/crafting que sustentem a progressão longa; limitar cache de floors/layouts para não acumular mapas de 15 MB na memória.
+- [ ] Testar escala de HP/melee/fases, chefes, 100 pisos/checkpoints, save legado, cutscene/recompensas, TypeScript, suíte, build offline/APK e browser.
+- [ ] Instalar/testar APK em dispositivo/emulador Android (pendente se não houver emulator/KVM disponível).
 
-## Áudio local do Kaetram
-- [x] Copiar músicas e efeitos do Kaetram para `public/kaetram/audio`, mantendo-os dentro do pacote principal e disponíveis offline.
-- [x] Selecionar automaticamente músicas locais por bioma e música de chefe, com efeitos locais para combate, cura, loot, UI, teleporte e progressão.
-- [x] Manter fallback sintetizado quando o navegador bloqueia ou não encontra um arquivo de áudio.
-- [x] Reempacotar e validar o APK offline com os novos arquivos de áudio.
-
-## Tutorial de primeira jornada
-- [x] Iniciar uma nova jornada, quando não houver save/tutorial concluído, em uma dungeon tutorial curta de 3 andares.
-- [x] Ensinar movimento, ataque, esquiva/posicionamento, uso de poções/éteres e magia durante a dungeon.
-- [x] Colocar um chefe exclusivo no terceiro andar, com ataques e efeitos do sistema de chefes existente.
-- [x] Liberar a entrada no mundo principal após vencer o chefe ou permitir pular a dungeon.
-- [x] Exibir um segundo tutorial, pulável e de primeira vez, explicando HUD, inventário, herói/atributos, missões, mapa, crônica, descobertas, bestiário, grimório, grande crônica, pets, aparência, casa, cultivo, construção e oficinas.
-- [x] Executar build, testes e checkpoint final com o tutorial e o áudio no APK.
+## Expansão anterior — concluída
+- [x] Arsenal novo de chefes, oito ataques exclusivos, FX por ação e encontros gêmeos de 5%.
+- [x] 80 animações, 18 tons e 40 efeitos adicionais gerados por IA (até 1.440 combinações).
+- [x] APK offline compilado e distribuição local validada no navegador; instalação nativa ainda depende de dispositivo/emulador.

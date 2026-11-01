@@ -35,3 +35,4 @@ dist-ssr
 android/.gradle/
 android/build/
 android/app/build/
+android/app/src/main/assets/game/

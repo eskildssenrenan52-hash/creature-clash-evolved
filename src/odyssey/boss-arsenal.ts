@@ -2,12 +2,13 @@
 // entre si; a combinação padrão + modificador nunca se repete entre chefes, e cada ataque
 // tem um efeito especial pintado por IA exclusivo (fx-catalog). Puro: o motor fornece o BossCtx.
 import type { FxName } from "./vfx";
+import { fxFor, type FxSig } from "./fx-catalog";
 
 export const BOSS_MOVES_PER_BOSS = 8;
 
 export interface BossCtx {
   readonly ex: number; readonly ey: number; readonly px: number; readonly py: number;
-  hit: number; ph2: boolean; color: string;
+  hit: number; ph2: boolean; phase: number; color: string;
   shot(x: number, y: number, vx: number, vy: number, dmg: number, r?: number, life?: number): void;
   tele(x: number, y: number, r: number, delay: number, dmg: number): void;
   later(delay: number, fn: () => void): void;
@@ -40,7 +41,7 @@ const PATTERNS: Pattern[] = [
   { id: "cerco", name: "Cerco", fx: ["rune", "crystal"], cd: 2, run: (c, p) => { const n = 6 + (p.n % 4); for (let i = 0; i < n; i++) { const a = (i / n) * TAU + p.rot; c.tele(c.px + Math.cos(a) * 48, c.py + Math.sin(a) * 40, 17, 1, c.hit * 1.3); } } },
   { id: "investida", name: "Investida", fx: ["impact", "sandstorm"], cd: 1.6, run: (c, p) => { const a = aim(c); c.tele(c.px, c.py, 14, 0.55, 0); c.charge(Math.cos(a) * (220 + p.k * 6), Math.sin(a) * (220 + p.k * 6), 0.7); c.sfx("wind"); } },
   { id: "tripla", name: "Investida Tripla", fx: ["claws", "impact"], cd: 3, run: (c) => { for (let k = 0; k < 3; k++) c.later(k * 0.85, () => { const a = aim(c); c.charge(Math.cos(a) * 260, Math.sin(a) * 260, 0.6); c.sfx("wind"); }); } },
-  { id: "invocar", name: "Invocação", fx: ["rune", "wisps"], cd: 2.4, run: (c) => { c.summon(c.ph2 ? 4 : 3); c.fx(c.ex, c.ey, 1.2); } },
+  { id: "invocar", name: "Invocação", fx: ["rune", "wisps"], cd: 2.4, run: (c) => { c.summon(c.phase >= 5 ? 6 : c.phase >= 3 ? 5 : c.ph2 ? 4 : 3); c.fx(c.ex, c.ey, 1.2); } },
   { id: "nova", name: "Nova", fx: ["explosion", "starburst"], cd: 2.4, run: (c, p) => { c.tele(c.ex, c.ey, 58, 1.2, c.hit * 1.8); c.later(1.2, () => { for (let i = 0; i < 16; i++) shotA(c, (i / 16) * TAU + p.rot, p.sp, c.hit * 0.7); c.shake(8); }); } },
   { id: "muralha", name: "Muralha com Brecha", fx: ["frost", "ice"], cd: 2.4, run: (c, p) => { const gap = Math.floor(Math.random() * 24); for (let k = 0; k < 3; k++) c.later(k * 0.5, () => { for (let i = 0; i < 24; i++) { if (Math.abs(i - ((gap + k * 3) % 24)) <= 1) continue; shotA(c, (i / 24) * TAU, p.sp * 0.6, c.hit * 0.9); } }); } },
   { id: "convergir", name: "Convergência", fx: ["blackhole", "void"], cd: 2, run: (c, p) => { const n = 10 + (p.n % 5); for (let i = 0; i < n; i++) { const a = (i / n) * TAU + p.rot, R = 140; c.shot(c.px + Math.cos(a) * R, c.py + Math.sin(a) * R, -Math.cos(a) * 85, -Math.sin(a) * 85, c.hit * 0.8, 4, 1.6); } c.sfx("fire"); } },
@@ -88,39 +89,54 @@ function withShot(c: BossCtx, shot: BossCtx["shot"]): BossCtx { const b = bind(c
 function bind(c: BossCtx): BossCtx {
   return {
     get ex() { return c.ex; }, get ey() { return c.ey; }, get px() { return c.px; }, get py() { return c.py; },
-    hit: c.hit, ph2: c.ph2, color: c.color,
+    hit: c.hit, ph2: c.ph2, phase: c.phase, color: c.color,
     shot: c.shot, tele: c.tele, later: c.later, charge: c.charge, blink: c.blink, summon: c.summon, shake: c.shake, sfx: c.sfx, fx: c.fx,
   };
 }
 
-export interface BossMove { key: string; pattern: string; mod: string; name: string; cooldown: number; fx: FxName[]; params: P }
+export interface BossMove { key: string; pattern: string; mod: string; name: string; cooldown: number; fx: FxName[]; signature: FxSig; params: P }
 
 function hash(s: string) { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0; return h >>> 0; }
 
 const used = new Set<string>();
 const arsenals = new Map<string, BossMove[]>();
+const patternUse = new Map<string, number>();
+export const BOSS_PATTERN_COUNT = PATTERNS.length;
+export const BOSS_PATTERN_IDS = PATTERNS.map((p) => p.id);
+export const BOSS_MODIFIER_IDS = MODS.map((m) => m.id);
 
 /** Os 8 ataques do chefe (ou do gêmeo, com id `x#gemeo`). Nunca repete combinação de outro chefe. */
 export function arsenalFor(bossKey: string): BossMove[] {
   const hit = arsenals.get(bossKey); if (hit) return hit;
-  const order = [...PATTERNS].sort((a, b) => hash(bossKey + a.id) - hash(bossKey + b.id));
+  // Espalha a carga entre os 37 padrões: até 36 bosses (18 pares potenciais)
+  // recebem 8 padrões sem esgotar os 8 modificadores de um único padrão cedo.
+  const order = [...PATTERNS].sort((a, b) => (patternUse.get(a.id) ?? 0) - (patternUse.get(b.id) ?? 0) || hash(bossKey + a.id) - hash(bossKey + b.id));
   const moves: BossMove[] = [];
+  const makeMove = (pat: Pattern, chosen: Mod, combo: string, gen = 1): BossMove => {
+    const s = hash(bossKey + combo), scale = gen > 1 ? 1 + (gen - 1) * 0.12 : 1;
+    const params: P = { n: (s % 7 + gen - 1) % 7, sp: (95 + (s % 41)) * scale, rot: ((s >>> 8) % 628) / 100 + (gen - 1) * 0.17, k: (s >>> 4) % 9 };
+    const suffix = gen > 1 ? ` ${["", "II", "III", "IV", "V", "VI", "VII"][gen - 1] ?? `V${gen}`}` : "";
+    return { key: `${bossKey}:${combo}`, pattern: pat.id, mod: `${chosen.id}${gen > 1 ? `#${gen}` : ""}`, name: `${pat.name}${chosen.name ? " " + chosen.name : ""}${suffix}`, cooldown: pat.cd * (0.85 + (s % 30) / 100), fx: pat.fx, signature: fxFor(`boss:${bossKey}:${combo}`, pat.fx), params };
+  };
   for (const pat of order) {
     if (moves.length >= BOSS_MOVES_PER_BOSS) break;
     const mods = [...MODS].sort((a, b) => hash(bossKey + pat.id + a.id) - hash(bossKey + pat.id + b.id));
-    let chosen: Mod | undefined, combo = "";
-    for (const m of mods) { const k = `${pat.id}+${m.id}`; if (!used.has(k)) { chosen = m; combo = k; break; } }
-    let gen = 2;
-    if (!chosen) { // tudo usado: numera uma nova geração do padrão, ainda única
-      chosen = mods[0]!;
-      while (used.has(`${pat.id}+${chosen.id}#${gen}`)) gen++;
-      combo = `${pat.id}+${chosen.id}#${gen}`;
-    }
-    used.add(combo);
-    const s = hash(bossKey + combo);
-    const params: P = { n: s % 7, sp: 95 + (s % 41), rot: ((s >>> 8) % 628) / 100, k: (s >>> 4) % 9 };
-    const suffix = combo.includes("#") ? ` ${["", "", "II", "III", "IV", "V", "VI"][gen] ?? gen}` : "";
-    moves.push({ key: `${bossKey}:${pat.id}`, pattern: pat.id, mod: chosen.id, name: `${pat.name}${chosen.name ? " " + chosen.name : ""}${suffix}`, cooldown: pat.cd * (0.85 + (s % 30) / 100), fx: pat.fx, params });
+    const chosen = mods.find((m) => !used.has(`${pat.id}+${m.id}`));
+    if (!chosen) continue;
+    const combo = `${pat.id}+${chosen.id}`;
+    used.add(combo); patternUse.set(pat.id, (patternUse.get(pat.id) ?? 0) + 1);
+    moves.push(makeMove(pat, chosen, combo));
+  }
+  // Mais de 37 bosses: preserva ataques exclusivos com parâmetros novos e marcador de geração.
+  for (const pat of order) {
+    if (moves.length >= BOSS_MOVES_PER_BOSS) break;
+    if (moves.some((m) => m.pattern === pat.id)) continue;
+    const mods = [...MODS].sort((a, b) => hash(bossKey + pat.id + a.id) - hash(bossKey + pat.id + b.id));
+    const chosen = mods[0]!;
+    let gen = 2; while (used.has(`${pat.id}+${chosen.id}#${gen}`)) gen++;
+    const combo = `${pat.id}+${chosen.id}#${gen}`;
+    used.add(combo); patternUse.set(pat.id, (patternUse.get(pat.id) ?? 0) + 1);
+    moves.push(makeMove(pat, chosen, combo, gen));
   }
   arsenals.set(bossKey, moves);
   return moves;
@@ -128,9 +144,10 @@ export function arsenalFor(bossKey: string): BossMove[] {
 
 /** Executa um ataque já sorteado. */
 export function runMove(m: BossMove, c: BossCtx) {
-  const pat = PATTERNS.find((p) => p.id === m.pattern), mod = MODS.find((x) => x.id === m.mod);
+  const pat = PATTERNS.find((p) => p.id === m.pattern), mod = MODS.find((x) => x.id === m.mod.split("#")[0]);
   if (!pat || !mod) return;
-  const p = c.ph2 ? { ...m.params, n: m.params.n + 3, sp: m.params.sp * 1.12 } : m.params;
+  const phase = Math.max(1, Math.min(5, Math.floor(c.phase)));
+  const p = phase > 1 ? { ...m.params, n: m.params.n + (phase - 1) * 2 + 1, sp: m.params.sp * (1 + (phase - 1) * 0.12), rot: m.params.rot + (phase - 1) * 0.17 } : m.params;
   mod.wrap(c, pat.run, p);
 }
 

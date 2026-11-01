@@ -15,6 +15,7 @@ import {
 import type { Beat } from './story';
 import './saga-extra';
 import { drawSagaScenery, drawSagaWeather, sagaSceneLights } from './saga-fx';
+import { bossHp } from './boss-tuning';
 
 /* ───────────── Itens lendários de cada reino ───────────── */
 for (const [i, r] of SAGA_REALMS.entries()) {
@@ -95,7 +96,7 @@ export function enterSagaZone(g: Game, ri: number, zi: number) {
     const st = bossStats(r, zi), end = data.stairs;
     const def: BossDef = { id, name: zn.boss.name, biome: zn.biome, tx: end.tx, ty: end.ty - 2, hp: st.hp, atk: st.atk, xp: st.xp, gold: st.gold, color: zn.boss.tint, minion: zn.enemies[0]!, reward: ['elixir', 'hi_potion', 'eco_shard'] };
     const e = g.makeEnemy(zn.boss.kind, def.tx * TS + 8, def.ty * TS + 8, 1);
-    e.hp = e.maxhp = def.hp; e.atk = def.atk; e.def = 8 + Math.floor(st.level / 3); e.xp = def.xp; e.gold = def.gold; e.speed = 32; e.level = st.level;
+    e.hp = e.maxhp = bossHp(def.hp); e.atk = def.atk; e.def = 8 + Math.floor(st.level / 3); e.xp = def.xp; e.gold = def.gold; e.speed = 32; e.level = st.level;
     e.boss = { def, active: false, phase: 1, patT: 2, attackIndex: 0, charge: 0, cvx: 0, cvy: 0 };
     g.enemies.push(e);
   }

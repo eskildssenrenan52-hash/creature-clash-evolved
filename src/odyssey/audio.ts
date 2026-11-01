@@ -42,7 +42,7 @@ export class Audio {
   private currentMusic: HTMLAudioElement | null = null;
   private currentTrack = "";
   private fallbackSynth = false;
-  private readonly assetBase = "/kaetram/audio";
+  private readonly assetBase = "kaetram/audio";
 
   init() {
     if (this.ctx) { void this.ctx.resume(); this.syncMusic(); return; }

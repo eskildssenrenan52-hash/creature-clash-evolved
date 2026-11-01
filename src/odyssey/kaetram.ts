@@ -48,7 +48,7 @@ export function kImage(key: string): HTMLImageElement | null {
   const def = K_SHEETS[key];
   if (!def || typeof Image === "undefined") { cache.set(key, null); return null; }
   const img = new Image();
-  img.src = def.url;
+  img.src = def.url.replace(/^\/+/, "");
   cache.set(key, img);
   return null;
 }

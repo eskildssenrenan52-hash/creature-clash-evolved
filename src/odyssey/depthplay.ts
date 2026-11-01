@@ -13,12 +13,20 @@ import type { RealmDef } from './secrets';
 import { ITEMS } from './data';
 import { ALL_REALMS } from './secrets';
 import { sagaDepthAction, sagaSurfaceAction, drawSagaStairs, sagaLights, sagaDarkness, setSagaLeave } from './saga-play';
+import { bossHp } from './boss-tuning';
+import {
+  CITADEL_DOOR, CITADEL_ENTRY, CITADEL_FLOORS, CITADEL_BOSS_LOOK, CITADEL_FINAL_BOSS_ID,
+  citadelBest, citadelBoss, citadelCheckpoints, citadelFloorLevel, citadelGuardianIntro, citadelTheme,
+  citadelTemple, citadelUnlocked, drawCitadelGate, drawCitadelThrone, generateCitadelFloor,
+  recordCitadelBest, carveCitadelSite,
+} from './demon-citadel';
 
 for (const [i, r] of ALL_REALMS.entries()) ITEMS[r.relic] ??= { id: r.relic, name: r.relicName, type: 'amulet', bonus: { str: 4 + i * 2, int: 4 + i * 2, vit: 3 + i * 2, hp: 60 + i * 40, mp: 30 + i * 20 }, desc: `Relíquia oculta do ${r.name}.`, color: r.color, price: 2000 + i * 1500 };
 
-export interface DepthState { kind: 'abyss' | 'temple' | 'tutorial'; floor: number; temple?: Temple; data: DungeonFloor; stair: StairStyle }
+export interface DepthState { kind: 'abyss' | 'temple' | 'tutorial'; profile?: 'citadel'; floor: number; temple?: Temple; data: DungeonFloor; stair: StairStyle }
 
 export const ABYSS_KEEPER: NpcDef = { id: 'abyss_keeper', name: 'Guardião do Abismo', title: 'Vigia dos Cem Andares', tx: ABYSS_DOOR.tx, ty: ABYSS_DOOR.ty, pal: { skin: '#d8c8b8', hair: '#3a2a5a', body: '#2a1a40', legs: '#120a20', accent: '#c78bff' }, lines: [] };
+export const CITADEL_KEEPER: NpcDef = { id: 'citadel_keeper', name: 'Sentinela de Gehenna', title: 'Guardiã da Estrada ao Trono', tx: CITADEL_DOOR.tx, ty: CITADEL_DOOR.ty, pal: { skin: '#b8a0a0', hair: '#201020', body: '#7a2028', legs: '#301018', accent: '#ff7050' }, lines: [] };
 const ABYSS_STAIRS: StairStyle[] = ['roots', 'fungal', 'marble', 'coral', 'sand', 'frost', 'lava', 'spiral', 'crystal', 'bones'];
 
 /** Tutorial inicial: uma rota curta que ensina os controles sem misturar o progresso do Abismo. */
@@ -52,11 +60,13 @@ export function carveEntrances(world: World) {
     const d = templeDoor(t); for (let k = 0; k <= 2; k++) set(d.tx, d.ty + k, T.PATH);
     world.nodes = world.nodes.filter((n) => Math.abs(n.tx - t.tx) > 5 || Math.abs(n.ty - t.ty) > 6);
   }
+  carveCitadelSite(world);
+  world.nodes = world.nodes.filter((n) => n.tx < CITADEL_ENTRY.tx - 3 || n.tx > CITADEL_ENTRY.tx + CITADEL_ENTRY.w + 3 || n.ty < CITADEL_ENTRY.ty - 8 || n.ty > CITADEL_ENTRY.ty + CITADEL_ENTRY.h + 4);
 }
 
 export const hasTorch = (g: Game) => g.count('torch') > 0;
 
-function populate(g: Game, d: DungeonFloor, strength: number, abyss = false) {
+function populate(g: Game, d: DungeonFloor, strength: number, abyss = false, citadel = false) {
   const out: Enemy[] = [];
   for (const s of d.spawns) {
     const sp = abyss ? BEASTS[pickBeast(d.floor, Math.random())]! : null;
@@ -67,9 +77,9 @@ function populate(g: Game, d: DungeonFloor, strength: number, abyss = false) {
     out.push(e);
   }
   if (d.boss && !g.bossesDone.has(d.boss.id)) {
-    const b = d.boss, look = ABYSS_BOSS_LOOK[b.id] ?? TUTORIAL_BOSS_LOOK[b.id] ?? { kind: b.minion, tint: b.color, scale: 2 };
+    const b = d.boss, look = CITADEL_BOSS_LOOK[b.id] ?? ABYSS_BOSS_LOOK[b.id] ?? TUTORIAL_BOSS_LOOK[b.id] ?? { kind: b.minion, tint: b.color, scale: 2 };
     const e = g.makeEnemy(look.kind, b.tx * TS + 8, b.ty * TS + 8, 1);
-    e.hp = e.maxhp = b.hp; e.atk = b.atk; e.def = 6 + Math.floor(d.floor / 3); e.xp = b.xp; e.gold = b.gold; e.speed = 30; e.level = d.floor + 8;
+    e.hp = e.maxhp = bossHp(b.hp); e.atk = b.atk; e.def = 6 + Math.floor(d.floor / 3); e.xp = b.xp; e.gold = b.gold; e.speed = 30; e.level = citadel ? citadelFloorLevel(d.floor) : d.floor + 8;
     e.boss = { def: b, active: false, phase: 1, patT: 2, attackIndex: 0, charge: 0, cvx: 0, cvy: 0 };
     out.push(e);
   }
@@ -81,7 +91,7 @@ function enter(g: Game, state: DepthState, strength: number) {
   if (g.interior) g.leaveInterior();
   if (!g.depth) { g.depthReturn = { x: g.p.x, y: g.p.y + 18 }; g.surfaceEnemies = g.enemies; }
   g.depth = state; g.world = state.data.world;
-  g.enemies = populate(g, state.data, strength, state.kind === 'abyss'); g.activeBoss = null; g.audio.boss = false;
+  g.enemies = populate(g, state.data, strength, state.kind === 'abyss', state.profile === 'citadel'); g.activeBoss = null; g.audio.boss = false;
   g.p.x = state.data.start.tx * TS + 8; g.p.y = (state.data.start.ty + 1) * TS + 8;
   g.clearTransition(); g.biome = state.data.theme.biome; g.audio.biome = state.data.theme.biome;
 }
@@ -154,6 +164,34 @@ export function enterAbyss(g: Game, floor: number) {
   g.save();
 }
 
+/** Entra num piso da Cidadela usando discoveries, sem tocar no recorde do Abismo ou nos saves antigos. */
+export function enterCitadel(g: Game, floor: number) {
+  const best = citadelBest(g.discoveries);
+  const allowed = floor === 1 || floor <= best || floor === best + 1;
+  if (!citadelUnlocked(g.bossesDone)) { g.toast('Os portões só se abrem depois da queda de Azrakel em Gehenna.', '#ff7777'); return; }
+  if (!Number.isInteger(floor) || floor < 1 || floor > CITADEL_FLOORS || !allowed) { g.toast('Esse checkpoint ainda não foi alcançado.', '#ffb060'); return; }
+  const data = generateCitadelFloor(floor), temple = citadelTemple(floor);
+  enter(g, { kind: 'temple', profile: 'citadel', floor, temple, data, stair: 'lava' }, 1.52 + floor * 0.0028);
+  recordCitadelBest(g.discoveries, floor); g.discoveries.add('citadel:entered');
+  g.biomeBanner = { name: `Cidadela de Gehenna · Andar ${floor}/${CITADEL_FLOORS} · ${data.theme.name}`, t: 5 };
+  if (floor === 1 || floor % 10 === 0) g.toast(data.theme.lore, data.theme.color);
+  if (data.boss && !g.bossesDone.has(data.boss.id)) g.toast(`⚔ ${data.boss.name}: ${citadelGuardianIntro(floor)}`, '#ff7777');
+  g.save();
+}
+
+export function openCitadelGate(g: Game) {
+  if (!citadelUnlocked(g.bossesDone)) { g.toast('A Cidadela está selada. Conclua a Saga de Gehenna primeiro.', '#ff7777'); return; }
+  const best = citadelBest(g.discoveries), floors = new Set(citadelCheckpoints(best).slice(-6));
+  if (best > 0 && best % 5 !== 0) floors.add(best);
+  if (best < CITADEL_FLOORS) floors.add(best + 1);
+  const choices = [...floors].sort((a, b) => a - b).map((floor) => ({
+    label: best === 0 && floor === 1 ? 'Começar no andar 1' : floor === best + 1 ? `Continuar no andar ${floor}` : floor === 1 ? 'Começar no andar 1' : floor === best ? `Retomar no andar ${floor}` : `Checkpoint · andar ${floor}`,
+    act: () => { g.dialog = null; enterCitadel(g, floor); },
+  }));
+  choices.push({ label: 'Agora não', act: () => { g.dialog = null; } });
+  g.dialog = { npc: CITADEL_KEEPER, text: `Dez alas e cem andares separam você do trono. Recorde da Cidadela: ${best}/100; o caminho é marcado a cada cinco andares.`, choices };
+}
+
 export function enterTemple(g: Game, t: Temple) {
   if (!hasTorch(g)) { g.toast('Escuro demais para descer. Você precisa de uma Tocha: compre no Mercador Pip, em Potos, ou faça na Carpintaria (2 madeira + 1 carvão).', '#ff9a60'); g.audio.sfx('ui'); return; }
   enter(g, { kind: 'temple', floor: 2, temple: t, data: generateTempleFloor(t), stair: t.stair }, 1.3);
@@ -212,11 +250,32 @@ export function tutorialDepthAction(g: Game, run: boolean): string {
   return '';
 }
 
+function citadelDepthAction(g: Game, run: boolean): string {
+  const d = g.depth;
+  if (!d || d.profile !== 'citadel') return '';
+  for (const c of d.data.chests) if (near(g, c.tx, c.ty)) {
+    if (run) g.claimChest(c.id, c.gold, c.item, c.qty, 'Baú da Cidadela');
+    return g.openedChests.has(c.id) ? 'Baú vazio' : 'E · Abrir baú';
+  }
+  if (near(g, d.data.start.tx, d.data.start.ty, 20)) {
+    if (run) { if (d.floor > 1) enterCitadel(g, d.floor - 1); else leaveDepth(g); }
+    return d.floor > 1 ? `E · Subir ao andar ${d.floor - 1}` : 'E · Voltar à superfície';
+  }
+  if (near(g, d.data.stairs.tx, d.data.stairs.ty, 20)) {
+    const boss = d.data.boss, locked = !!boss && !g.bossesDone.has(boss.id);
+    if (locked) { if (run) g.toast(`${boss!.name} sela a escada. Derrote-o primeiro.`, '#ff7777'); return 'Escada selada pelo guardião'; }
+    if (run) { if (d.floor >= CITADEL_FLOORS) leaveDepth(g); else enterCitadel(g, d.floor + 1); }
+    return d.floor >= CITADEL_FLOORS ? 'E · Deixar a Cidadela' : `E · Descer ao andar ${d.floor + 1}`;
+  }
+  return '';
+}
+
 /** Interação dentro das profundezas: escadas, baús e relíquias. Retorna o texto do aviso ou executa. */
 export function depthAction(g: Game, run: boolean): string {
   const d = g.depth; if (!d) return '';
   const data = d.data;
   if (d.kind === 'tutorial') return tutorialDepthAction(g, run);
+  if (d.profile === 'citadel') return citadelDepthAction(g, run);
   const sg = sagaDepthAction(g, run); if (sg) return sg;
   const sec = secretDepthAction(g, run); if (sec) return sec;
   const prop = propAction(g, run); if (prop) return prop;
@@ -242,6 +301,11 @@ export function depthAction(g: Game, run: boolean): string {
 
 /** Interação na superfície com as entradas. */
 export function surfaceEntrance(g: Game, run: boolean): string {
+  if (near(g, CITADEL_DOOR.tx, CITADEL_DOOR.ty, 28)) {
+    if (!citadelUnlocked(g.bossesDone)) { if (run) g.toast('A porta reage à Coroa de Gehenna. Derrote Azrakel na Saga para abri-la.', '#ff7777'); return 'Portões selados · complete Gehenna'; }
+    if (run) openCitadelGate(g);
+    return 'E · Cidadela de Gehenna · 100 andares';
+  }
   if (near(g, ABYSS_DOOR.tx, ABYSS_DOOR.ty, 26)) { if (run) openAbyssGate(g); return 'E · Portão do Abismo do Cântico'; }
   for (const t of TEMPLES) { const d = templeDoor(t); if (near(g, d.tx, d.ty, 24)) { if (run) enterTemple(g, t); return `E · ${t.name}${hasTorch(g) ? '' : ' (requer Tocha)'}`; } }
   const sg = sagaSurfaceAction(g, run); if (sg) return sg;
@@ -249,6 +313,8 @@ export function surfaceEntrance(g: Game, run: boolean): string {
 }
 
 export function drawSurfaceEntrances(g: Game, c: CanvasRenderingContext2D, draws: { y: number; f: () => void }[], x0: number, y0: number, x1: number, y1: number, wt: number) {
+  if (CITADEL_ENTRY.tx >= x0 - 20 && CITADEL_ENTRY.tx <= x1 + 20 && CITADEL_ENTRY.ty >= y0 - 12 && CITADEL_ENTRY.ty <= y1 + 20)
+    draws.push({ y: (CITADEL_DOOR.ty + 1) * TS, f: () => drawCitadelGate(c, citadelUnlocked(g.bossesDone), wt) });
   if (ABYSS_DOOR.tx >= x0 - 8 && ABYSS_DOOR.tx <= x1 + 8 && ABYSS_DOOR.ty >= y0 - 2 && ABYSS_DOOR.ty <= y1 + 10) draws.push({ y: (ABYSS_DOOR.ty + 1) * TS, f: () => drawAbyssGate(c, ABYSS_DOOR, wt) });
   for (const t of TEMPLES) if (t.tx >= x0 - 8 && t.tx <= x1 + 8 && t.ty >= y0 - 2 && t.ty <= y1 + 10) draws.push({ y: (templeDoor(t).ty + 1) * TS, f: () => drawTemple(c, t, wt) });
   void g;
@@ -257,10 +323,19 @@ export function drawSurfaceEntrances(g: Game, c: CanvasRenderingContext2D, draws
 export function drawDepth(g: Game, c: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, wt: number) {
   const d = g.depth; if (!d) return;
   const data = d.data, vis = (x: number, y: number) => x >= x0 - 1 && x <= x1 + 1 && y >= y0 - 1 && y <= y1 + 1;
+  if (d.profile === 'citadel') {
+    if (d.floor === CITADEL_FLOORS && vis(data.stairs.tx, data.stairs.ty)) drawCitadelThrone(c, data.stairs.tx * TS + 8, data.stairs.ty * TS + 8, 35 * TS, 22 * TS);
+    drawStairs(c, d.stair, data.start.tx, data.start.ty, false, wt);
+    const locked = !!data.boss && !g.bossesDone.has(data.boss.id);
+    drawStairs(c, d.stair, data.stairs.tx, data.stairs.ty, true, wt, locked);
+    for (const ch of data.chests) if (vis(ch.tx, ch.ty)) drawTreasure(c, ch.tx * TS + 8, ch.ty * TS + 12, g.openedChests.has(ch.id), wt);
+    for (const t of data.torches) if (vis(t.tx, t.ty)) drawWallTorch(c, t.tx, t.ty, wt);
+    return;
+  }
   if (drawSagaStairs(g, c, wt)) { for (const ch of data.chests) if (vis(ch.tx, ch.ty)) drawTreasure(c, ch.tx * TS + 8, ch.ty * TS + 12, g.openedChests.has(ch.id), wt); for (const t of data.torches) if (vis(t.tx, t.ty)) drawWallTorch(c, t.tx, t.ty, wt); return; }
   drawStairs(c, d.stair, data.start.tx, data.start.ty, false, wt);
   if ((d.kind === 'abyss' && d.floor < ABYSS_FLOORS) || d.kind === 'tutorial') drawStairs(c, d.stair, data.stairs.tx, data.stairs.ty, true, wt, d.kind === 'tutorial' ? g.enemies.some((e) => e.alive) : !!data.boss && !g.bossesDone.has(data.boss.id));
-  if (d.kind === 'temple' || d.floor >= ABYSS_FLOORS) drawTreasure(c, data.stairs.tx * TS + 8, data.stairs.ty * TS + 12, g.openedChests.has(`${d.temple?.id}-relic`), wt);
+  if ((d.kind === 'temple' && d.profile !== 'citadel') || d.floor >= ABYSS_FLOORS) drawTreasure(c, data.stairs.tx * TS + 8, data.stairs.ty * TS + 12, g.openedChests.has(`${d.temple?.id}-relic`), wt);
   for (const ch of data.chests) if (vis(ch.tx, ch.ty)) drawTreasure(c, ch.tx * TS + 8, ch.ty * TS + 12, g.openedChests.has(ch.id), wt);
   for (const t of data.torches) if (vis(t.tx, t.ty)) drawWallTorch(c, t.tx, t.ty, wt);
 }
@@ -269,13 +344,14 @@ export function drawDepth(g: Game, c: CanvasRenderingContext2D, x0: number, y0: 
 export function depthLights(g: Game, hole: (x: number, y: number, r: number, a?: number) => void, glows: { x: number; y: number; r: number; col: string }[], wt: number) {
   const d = g.depth; if (!d) return;
   const torch = hasTorch(g);
-  hole(g.p.x, g.p.y - 8, (torch ? 96 : 34) + Math.sin(wt * 9) * 3);
+  hole(g.p.x, g.p.y - 8, (torch ? 96 : d.profile === 'citadel' ? 84 : 34) + Math.sin(wt * 9) * 3);
   if (torch) glows.push({ x: g.p.x, y: g.p.y - 10, r: 46, col: 'rgba(255,150,60,0.22)' });
+  if (d.profile === 'citadel') glows.push({ x: d.data.stairs.tx * TS + 8, y: d.data.stairs.ty * TS + 8, r: 68, col: 'rgba(255,76,40,0.28)' });
   for (const t of d.data.torches) { hole(t.tx * TS + 8, t.ty * TS + 6, 64 + Math.sin(wt * 7 + t.tx) * 3, 0.95); glows.push({ x: t.tx * TS + 8, y: t.ty * TS + 4, r: 34, col: 'rgba(255,140,50,0.32)' }); }
   hole(d.data.start.tx * TS + 8, d.data.start.ty * TS + 8, 30, 0.6);
   propLights(g, hole, glows, wt);
   secretLights(g, hole); sagaLights(g, hole);
 }
-export const depthDarkness = (g: Game) => sagaDarkness(g) ?? (isRealm(g.depth?.temple) ? 0.72 : g.depth?.kind === 'temple' ? 0.95 : 0.9);
+export const depthDarkness = (g: Game) => g.depth?.profile === 'citadel' ? 0.42 : sagaDarkness(g) ?? (isRealm(g.depth?.temple) ? 0.72 : g.depth?.kind === 'temple' ? 0.95 : 0.9);
 
 setSagaLeave((g) => leaveDepth(g));

@@ -4,6 +4,9 @@ import { QUESTS, BOSSES } from './data';
 import { actChainQuests, ALL_ECO_BOSSES } from './story';
 import { FRONTIER_GATES, FRONTIER } from './frontier';
 import { TS } from './world';
+import { bossHp, bossMeleeDamage } from './boss-tuning';
+import { enterCitadel } from './depthplay';
+import { CITADEL_FINAL_BEAT_ID, CITADEL_FINAL_BOSS_ID, CITADEL_UNLOCK_BOSS_ID } from './demon-citadel';
 
 // Canvas 2D falso: qualquer método é um no-op, gradientes aceitam addColorStop.
 function fakeCtx(canvas: unknown) {
@@ -56,10 +59,62 @@ describe('Engine — campanha integrada', { timeout: 90000 }, () => {
   it('vencer um chefe de Eco entrega Fragmentos de Eco e dispara a cena do Eco', () => {
     const k = make(), boss = k.enemies.find(e => e.boss?.def.id === 'sunflower_boss')!;
     expect(boss).toBeDefined(); expect(boss.level).toBeGreaterThan(10);
+    expect(boss.maxhp).toBe(bossHp(boss.boss!.def.hp));
     k.killEnemy(boss);
     expect(k.bossesDone.has('sunflower_boss')).toBe(true);
     expect(k.count('eco_shard')).toBeGreaterThanOrEqual(3);
     expect(k.cutscene?.beat.id).toBe('eco_sunflower');
+  });
+  it('chefes gêmeos despertam juntos e a vitória/progresso só acontece quando o último cai', () => {
+    const k = make(), boss = k.enemies.find(e => e.boss?.def.id === 'sunflower_boss')!;
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.01);
+    k.activateBoss(boss);
+    rng.mockRestore();
+    const key = boss.boss?.twinKey;
+    expect(key).toBe('twin:sunflower_boss');
+    const twin = k.enemies.find(e => e !== boss && e.boss?.twinKey === key)!;
+    expect(twin).toBeDefined(); expect(boss.boss?.active).toBe(true); expect(twin.boss?.active).toBe(true);
+    expect(twin.maxhp).toBe(bossHp(twin.boss!.def.hp));
+    expect(twin.boss?.arsenalKey).not.toBe(boss.boss?.arsenalKey);
+    expect(JSON.parse(localStorage.getItem('golden-arrow-save')!).twinRolls.sunflower_boss).toBe(true);
+    k.killEnemy(boss);
+    expect(k.bossesDone.has('sunflower_boss')).toBe(false);
+    expect(k.activeBoss).toBe(twin);
+    k.killEnemy(twin);
+    expect(k.bossesDone.has('sunflower_boss')).toBe(true);
+    expect(k.activeBoss).toBeNull();
+  });
+  it('usa contato corpo a corpo ×3 e conduz o chefe por cinco fases sem alterar o HP-base', () => {
+    const k = make(), boss = k.enemies.find(e => e.boss?.def.id === 'sunflower_boss')!;
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    k.activateBoss(boss); rng.mockRestore();
+    const hurt = vi.spyOn(k, 'hurtPlayer');
+    boss.cd = 0; boss.boss!.patT = 2;
+    k.updateBoss(boss, 0, 10, 1, 0);
+    expect(hurt.mock.calls[0]?.[0]).toBe(bossMeleeDamage(boss.atk));
+    for (const [ratio, phase] of [[0.79, 2], [0.59, 3], [0.39, 4], [0.19, 5]] as const) {
+      boss.hp = boss.maxhp * ratio;
+      k.updateBoss(boss, 0, 100, 80, 0);
+      expect(boss.boss!.phase).toBe(phase);
+    }
+    expect(boss.maxhp).toBe(bossHp(boss.boss!.def.hp));
+    hurt.mockRestore();
+  });
+  it('escala uma única vez o guardião de masmorra e preserva recorde/checkpoint próprios', () => {
+    const k = make(); k.bossesDone.add(CITADEL_UNLOCK_BOSS_ID); k.discoveries.add('citadel:bestFloor=10');
+    enterCitadel(k, 10);
+    const boss = k.enemies.find((e) => e.boss?.def.id === 'citadel_10');
+    expect(k.depth?.profile).toBe('citadel'); expect(k.depth?.floor).toBe(10);
+    expect(boss).toBeDefined(); expect(boss!.maxhp).toBe(bossHp(boss!.boss!.def.hp));
+  });
+  it('dispara a cutscene do trono ao derrotar Azrakel no andar 100', () => {
+    const k = make(); k.bossesDone.add(CITADEL_UNLOCK_BOSS_ID); k.discoveries.add('citadel:bestFloor=99');
+    enterCitadel(k, 100);
+    const boss = k.enemies.find((e) => e.boss?.def.id === CITADEL_FINAL_BOSS_ID)!;
+    expect(k.depth?.floor).toBe(100); expect(boss).toBeDefined();
+    k.killEnemy(boss);
+    expect(k.bossesDone.has(CITADEL_FINAL_BOSS_ID)).toBe(true);
+    expect(k.cutscene?.beat.id).toBe(CITADEL_FINAL_BEAT_ID);
   });
   it('Ciclo do Eco: só após o epílogo, reinicia a campanha, reergue chefes mais fortes e persiste', () => {
     const k = make();

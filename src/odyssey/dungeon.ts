@@ -78,7 +78,7 @@ export interface DungeonFloor {
   /** Tochas de parede (poucas): as únicas luzes fixas do andar. */
   torches: { tx: number; ty: number }[];
 }
-export interface FloorOptions { theme: Theme; seed: number; size: { w: number; h: number }; level: number; idPrefix: string; eliteBonus?: number }
+export interface FloorOptions { theme: Theme; seed: number; size: { w: number; h: number }; level: number; idPrefix: string; eliteBonus?: number; guardian?: boolean; finalArena?: boolean }
 
 function rng(seed: number) {
   let a = seed >>> 0;
@@ -96,7 +96,8 @@ export function generateFloor(floor: number, opts?: FloorOptions): DungeonFloor 
   const set = (x: number, y: number, t: number) => { if (x > OX && y > OY && x < OX + w - 1 && y < OY + h - 1) tiles[y * W + x] = t; };
   const carve = (x: number, y: number, rw: number, rh: number) => { for (let yy = y; yy < y + rh; yy++) for (let xx = x; xx < x + rw; xx++) set(xx, yy, theme.floor); };
   const rooms: Room[] = [];
-  const final = !opts && floor >= ABYSS_FLOORS, guardian = !opts && isGuardianFloor(floor);
+  const final = opts?.finalArena ?? (!opts && floor >= ABYSS_FLOORS);
+  const guardian = opts?.guardian ?? (!opts && isGuardianFloor(floor));
   const overlaps = (a: Room) => rooms.some(b => a.x < b.x + b.w + 3 && a.x + a.w + 3 > b.x && a.y < b.y + b.h + 3 && a.y + a.h + 3 > b.y);
 
   if (final) {

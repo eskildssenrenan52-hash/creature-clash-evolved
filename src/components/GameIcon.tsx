@@ -1,5 +1,5 @@
 // Ícones de botões em pixel art gerados por IA (src/assets/ui/icons).
-const files = import.meta.glob("@/assets/ui/icons/*.png", { eager: true, import: "default" }) as Record<string, string>;
+const files = import.meta.glob("../assets/ui/icons/*.png", { eager: true, import: "default" }) as Record<string, string>;
 const ICONS: Record<string, string> = {};
 for (const [path, url] of Object.entries(files)) ICONS[path.split("/").pop()!.replace(".png", "")] = url;
 

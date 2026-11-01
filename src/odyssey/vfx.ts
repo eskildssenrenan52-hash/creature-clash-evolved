@@ -1,4 +1,4 @@
-// Efeitos especiais pintados por IA (sem personagem): 40 efeitos × 5 quadros em public/fx/fx.png.
+// Efeitos especiais pintados por IA (sem personagem): 80 efeitos × 5 quadros em public/fx/fx.png.
 // Quadros de 64 px; o brilho já vem com transparência, então desenha sobre qualquer chão.
 // Cada instância pode ter um giro de matiz (h) — combinado com o efeito, isso dá a cada
 // ataque do jogo uma assinatura visual própria (ver fx-catalog.ts).
@@ -16,6 +16,17 @@ export const FX_NAMES = [
   "bubbles", "sandstorm", "rune", "orb",
   "petals", "blackhole", "breath", "bones",
   "prism", "spores", "xspark", "wisps",
+  // Lotes adicionais gerados por IA: combate, magia, ambiente, utilidades, pets e chefes.
+  "fireburst", "lava", "iceburst", "thunderclap",
+  "renewal", "barrier", "goldenrune", "shadowstep",
+  "miasma", "corrosion", "leafwhirl", "sonicwave",
+  "treasure", "ripple", "campfire", "petalswarm",
+  "bondhearts", "levelup", "spiritglow", "enrage",
+  "arrowtrail", "missiletrail", "spearwind", "parry",
+  "summoning", "shieldbreak", "phasechange", "bossdefeat",
+  "potionglow", "craftspark", "portal", "discovery",
+  "snowpuff", "raindrop", "sandgust", "leafswirl",
+  "pettail", "petclaw", "petfood", "hatch",
 ] as const;
 export type FxName = (typeof FX_NAMES)[number];
 
@@ -23,6 +34,8 @@ export type FxName = (typeof FX_NAMES)[number];
 export const GROUND_FX = new Set<FxName>([
   "lightning", "holy", "poison", "earth", "water", "arcane", "meteor", "shock", "wind",
   "firestorm", "crystal", "acid", "geyser", "sunbeam", "bubbles", "sandstorm", "rune", "bones", "spores",
+  "lava", "thunderclap", "barrier", "goldenrune", "miasma", "corrosion", "leafwhirl", "ripple", "campfire",
+  "summoning", "shieldbreak", "portal", "snowpuff", "raindrop", "sandgust", "leafswirl",
 ]);
 const FRAME = 64, FRAMES = 5;
 
@@ -32,7 +45,7 @@ let img: HTMLImageElement | null | undefined;
 function sheet(): HTMLImageElement | null {
   if (img === undefined) {
     if (typeof Image === "undefined") { img = null; return null; }
-    img = new Image(); img.src = "/fx/fx.png?v=2";
+    img = new Image(); img.src = "fx/fx.png?v=4";
   }
   return img && img.complete && img.naturalWidth ? img : null;
 }
