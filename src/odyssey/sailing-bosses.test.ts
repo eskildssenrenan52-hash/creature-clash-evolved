@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Game } from "./engine";
 import { ISLANDS } from "./archipelago";
-import { islandBossState, islandOnKill } from "./sailing";
+import { ISLAND_BOSS_RESPAWN_SECONDS, islandBossState, islandOnKill } from "./sailing";
 import { bossHp } from "./boss-tuning";
 import { TS } from "./world";
 
@@ -23,11 +23,13 @@ function makeGame() {
 }
 
 describe("chefes do arquipélago", () => {
-  it("usa o executor de cinco fases e mantém a vida 5x ao criar um gêmeo", () => {
+  it("reduz a vida dos bosses a um terço e mantém o mesmo HP no gêmeo", () => {
     const game = makeGame();
     const island = ISLANDS[0]!;
     const boss = game.makeEnemy(island.boss.kind, 30 * TS + 8, 30 * TS + 8, 4);
-    const baseHp = boss.maxhp * island.boss.hp;
+    const originalBaseHp = boss.maxhp * island.boss.hp;
+    const originalBossHp = bossHp(originalBaseHp);
+    const baseHp = originalBaseHp / 3;
     boss.maxhp = boss.hp = bossHp(baseHp);
     boss.atk = Math.round(boss.atk * 1.5);
     boss.boss = islandBossState(island, boss, baseHp);
@@ -40,6 +42,7 @@ describe("chefes do arquipélago", () => {
     expect(boss.boss.phase).toBe(1);
     expect(boss.boss.def.id).toBe(`isle_${island.id}_boss`);
     expect(boss.maxhp).toBe(bossHp(baseHp));
+    expect(Math.abs(boss.maxhp * 3 - originalBossHp)).toBeLessThanOrEqual(2);
 
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.01);
     game.activateBoss(boss);
@@ -73,5 +76,35 @@ describe("chefes do arquipélago", () => {
     expect(game.count(island.boss.drop)).toBe(island.boss.dropQty);
     islandOnKill(game, twin);
     expect(game.count(island.boss.drop)).toBe(island.boss.dropQty);
+  });
+
+  it("respawna o boss da ilha depois de 45 segundos fora do alcance e reinicia a fase", () => {
+    const game = makeGame();
+    const island = ISLANDS[0]!;
+    const boss = game.makeEnemy(island.boss.kind, 30 * TS + 8, 30 * TS + 8, 4);
+    const baseHp = boss.maxhp * island.boss.hp / 3;
+    boss.maxhp = boss.hp = bossHp(baseHp);
+    boss.boss = islandBossState(island, boss, baseHp);
+    game.enemies = [boss];
+    game.island = {
+      def: island, ox: 0, oy: 0, span: 0, bossId: boss.id, bossIds: [boss.id],
+      seaPos: { x: 0, y: 0, a: 0 }, center: { x: 0, y: 0 }, tick: 0, parts: [],
+    };
+    game.p.x = boss.x + 400; game.p.y = boss.y;
+
+    const noTwin = vi.spyOn(Math, "random").mockReturnValue(0.99);
+    try { game.activateBoss(boss); } finally { noTwin.mockRestore(); }
+    boss.boss!.phase = 5;
+    game.killEnemy(boss);
+    expect(boss.alive).toBe(false);
+    expect(boss.respawn).toBe(ISLAND_BOSS_RESPAWN_SECONDS);
+
+    game.updateEnemies(ISLAND_BOSS_RESPAWN_SECONDS + 1);
+    expect(boss.alive).toBe(true);
+    expect(boss.hp).toBe(boss.maxhp);
+    expect(boss.boss?.active).toBe(false);
+    expect(boss.boss?.phase).toBe(1);
+    expect(game.island.bossId).toBe(boss.id);
+    expect(game.island.bossIds).toEqual([boss.id]);
   });
 });

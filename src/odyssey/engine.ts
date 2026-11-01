@@ -37,7 +37,7 @@ import { BEASTS, beastKey } from "./bestiary";
 import { drawBeast } from "./beast-art";
 import { carveEntrances, depthAction, surfaceEntrance, drawSurfaceEntrances, drawDepth, depthLights, depthDarkness, leaveDepth, enterCitadel, restartTutorialFloor, TUTORIAL_BOSS_ID, TUTORIAL_BOSS_LOOK, type DepthState } from "./depthplay";
 import { BOAT_RECIPES } from "./archipelago";
-import { archipelagoInteract, archipelagoPrompt, archipelagoArea, onBoatCraft, updateSea, renderSea, islandTick, islandOnKill, leaveArchipelago, drawIslandProps, drawIslandAtmosphere, type SeaRun, type IslandRun } from "./sailing";
+import { archipelagoInteract, archipelagoPrompt, archipelagoArea, onBoatCraft, updateSea, renderSea, islandTick, islandOnKill, leaveArchipelago, drawIslandProps, drawIslandAtmosphere, ISLAND_BOSS_RESPAWN_SECONDS, type SeaRun, type IslandRun } from "./sailing";
 import { objectiveWaypoint, type Waypoint } from "./waypoint";
 import { waterLife, windLife, biomeLife, bossArenaLife } from './biome-anim';
 import { STORY_BOSS_LOOK, STORY_QUESTS, ALL_ECO_BOSSES, beatsFor, depthBonus, cycleBonus, cycleBossMult, endgameDrop, actChainQuests, type Beat } from "./story";
@@ -477,6 +477,10 @@ export class Game {
         return;
       }
       const lead = this.enemies.find((x) => x.boss?.def.id === mainId);
+      if (mainId.startsWith("isle_")) {
+        (lead ?? e).respawn = ISLAND_BOSS_RESPAWN_SECONDS;
+        this.twinRolls.delete(mainId);
+      }
       const b = lead?.boss?.def ?? state.def;
       this.bossesDone.add(mainId);
       if (b.id === TUTORIAL_BOSS_ID) { this.tutorialActive = false; this.tutorialDone = true; this.tutorialFloor = 3; this.tutorialModalPending = true; this.p.points = Math.max(this.p.points, 3); }
@@ -1185,7 +1189,18 @@ export class Game {
       if (!e.alive) {
         if (e.respawn > 0) {
           e.respawn -= dt;
-          if (e.respawn <= 0 && Math.hypot(e.hx - p.x, e.hy - p.y) > 260) { e.alive = true; e.hp = e.maxhp; e.x = e.hx; e.y = e.hy; }
+          if (e.respawn <= 0 && Math.hypot(e.hx - p.x, e.hy - p.y) > 260) {
+            e.alive = true; e.hp = e.maxhp; e.x = e.hx; e.y = e.hy;
+            if (e.boss?.def.id.startsWith("isle_")) {
+              e.boss.active = false; e.boss.phase = 1; e.boss.patT = 2; e.boss.attackIndex = 0; e.boss.charge = 0; e.boss.cvx = 0; e.boss.cvy = 0;
+              delete e.boss.twinKey; delete e.boss.twinMainId;
+              this.twinRolls.delete(e.boss.def.id);
+              this.bossCallbacks = this.bossCallbacks.filter((cb) => cb.ownerId !== e.id);
+              if (this.island && e.boss.def.id === `isle_${this.island.def.id}_boss`) {
+                this.island.bossId = e.id; this.island.bossIds = [e.id];
+              }
+            }
+          }
           else if (e.respawn <= 0) e.respawn = 5;
         }
         continue;

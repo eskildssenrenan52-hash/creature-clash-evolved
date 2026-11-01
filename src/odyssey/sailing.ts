@@ -16,6 +16,7 @@ import {
 
 export interface SeaRun { boat: BoatState; def: BoatDef; t: number; wake: { x: number; y: number; life: number }[]; warnT: number }
 export interface IslandRun { def: IslandDef; ox: number; oy: number; span: number; bossId: number; bossIds?: number[]; seaPos: { x: number; y: number; a: number }; center: { x: number; y: number }; tick: number; parts: { x: number; y: number; s: number }[] }
+export const ISLAND_BOSS_RESPAWN_SECONDS = 45;
 
 const MAIN_SEED = 3.1;
 const DEPTH_NAMES = ["Terra", "Águas rasas", "Costas", "Mar aberto", "Fossa abissal"];
@@ -155,14 +156,13 @@ function land(g: Game, id: string) {
   }
   let bossId = -1;
   const bossIds: number[] = [];
-  if (!done(g, `isle:${def.id}:q1`)) {
-    const bx = b.center.x - Math.cos(arriveA) * (b.span * TS * 0.18), by = b.center.y - Math.sin(arriveA) * (b.span * TS * 0.18);
-    const boss = g.makeEnemy(def.boss.kind, bx, by, enemyLevel(def.base as never, def.boss.kind) + def.tier * 4 + 2);
-    const baseHp = boss.maxhp * def.boss.hp;
-    boss.hp = boss.maxhp = bossHp(baseHp); boss.atk = Math.round(boss.atk * 1.5); boss.elite = true; boss.xp *= 12; boss.gold *= 10;
-    boss.boss = islandBossState(def, boss, baseHp);
-    enemies.push(boss); bossId = boss.id; bossIds.push(boss.id);
-  }
+  const bx = b.center.x - Math.cos(arriveA) * (b.span * TS * 0.18), by = b.center.y - Math.sin(arriveA) * (b.span * TS * 0.18);
+  const boss = g.makeEnemy(def.boss.kind, bx, by, enemyLevel(def.base as never, def.boss.kind) + def.tier * 4 + 2);
+  // Mantém a escala global de boss, mas reduz o HP final das ilhas para um terço.
+  const baseHp = boss.maxhp * def.boss.hp / 3;
+  boss.hp = boss.maxhp = bossHp(baseHp); boss.atk = Math.round(boss.atk * 1.5); boss.elite = true; boss.xp *= 12; boss.gold *= 10;
+  boss.boss = islandBossState(def, boss, baseHp);
+  enemies.push(boss); bossId = boss.id; bossIds.push(boss.id);
   g.enemies = enemies;
   g.island = { def, ox: b.ox, oy: b.oy, span: b.span, bossId, bossIds, seaPos: { x: s.boat.x, y: s.boat.y, a: s.boat.a + Math.PI }, center: b.center, tick: 0, parts: [] };
   g.sea = null;
